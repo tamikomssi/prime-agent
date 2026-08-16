@@ -837,6 +837,19 @@ export function deriveAutomaticSessionName(prompt: string, maxLength = 52): stri
 	return `${candidate.slice(0, boundary >= Math.floor(maxLength * 0.6) ? boundary : maxLength).trimEnd()}…`;
 }
 
+export function formatSessionIdentityPlaceholder(input: {
+	sessionId?: string;
+	sessionName?: string;
+	cwd: string;
+}): string {
+	if (input.sessionName) return `${input.sessionName} — message this Prime session`;
+	const shortId = input.sessionId
+		?.replace(/[^a-zA-Z0-9]/gu, "")
+		.slice(-5)
+		.toUpperCase();
+	return `${shortId ? `[${shortId}] — ` : ""}${path.basename(input.cwd)} — message this Prime session`;
+}
+
 export function formatTerminalIdentityTitle(input: {
 	appTitle: string;
 	sessionId?: string;
@@ -1131,7 +1144,7 @@ export class InteractiveMode {
 			paddingX: editorPaddingX,
 			autocompleteMaxVisible,
 			isArgumentCommand: builtinSlashCommandTakesArgument,
-			placeholder: this.startHint,
+			placeholder: this.getSessionIdentityPlaceholder(),
 			placeholderColor: (text) => theme.fg("dim", text),
 		});
 		this.editor = this.defaultEditor;
@@ -1510,6 +1523,15 @@ export class InteractiveMode {
 				cwd: this.getCurrentCwd(),
 			}),
 		);
+		this.defaultEditor.setPlaceholder(this.getSessionIdentityPlaceholder());
+	}
+
+	private getSessionIdentityPlaceholder(): string {
+		return formatSessionIdentityPlaceholder({
+			sessionId: this.connectionState?.sessionId ?? this.promptStashSessionId,
+			sessionName: this.getCurrentSessionName(),
+			cwd: this.getCurrentCwd(),
+		});
 	}
 
 	/**

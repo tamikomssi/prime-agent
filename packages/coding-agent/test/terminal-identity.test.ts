@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { deriveAutomaticSessionName, formatTerminalIdentityTitle } from "../src/modes/interactive/interactive-mode.js";
+import {
+	deriveAutomaticSessionName,
+	formatSessionIdentityPlaceholder,
+	formatTerminalIdentityTitle,
+} from "../src/modes/interactive/interactive-mode.js";
 
 describe("terminal identity", () => {
 	test("derives a concise task label from the first prompt", () => {
@@ -23,5 +27,15 @@ describe("terminal identity", () => {
 				cwd: "/home/tami/pi-slack",
 			}),
 		).toBe("[B0689] — Slack bridge routing — pi-slack | Prime Agent");
+	});
+
+	test("shows the identity inside the prompt when terminal tabs hide titles", () => {
+		expect(
+			formatSessionIdentityPlaceholder({
+				sessionId: "01a0092b-fc99-72af-a405-ca7992bb0689",
+				sessionName: "[B0689] Prime Slack bridge",
+				cwd: "/home/tami",
+			}),
+		).toBe("[B0689] Prime Slack bridge — message this Prime session");
 	});
 });
