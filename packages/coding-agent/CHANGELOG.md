@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Fixed fork-server kernels losing their Prime process ancestry when Node reaches an idle lifecycle boundary.
 - Added automatic task names and stable short IDs to desktop terminal titles and input placeholders so concurrent sessions are easy to distinguish.
 - Fixed fullscreen wheel scrolling in Ghostty while retaining application link clicks; set `terminal.fullscreenMouse` to `false` to use native Cmd-click instead.
 - Changed the agents view to sort idle and inactive sessions by last message time, newest first, while keeping running agents in stable creation order.
