@@ -5195,6 +5195,8 @@ export class InteractiveMode {
 					this.handleSideQuestionEvent(event.event);
 				} else if (event.type === "extension_ui_request") {
 					await this.handleConnectionExtensionUiRequest(event.request);
+				} else if (event.type === "extension_ui_cancelled") {
+					this.cancelConnectionExtensionUiRequest(event.requestId);
 				} else if (event.type === "connection_status") {
 					this.showStatus(
 						event.status === "connected" ? "Daemon reconnected" : "Daemon connection lost; reconnecting…",
@@ -5259,6 +5261,15 @@ export class InteractiveMode {
 			request.method === "input" ||
 			request.method === "editor"
 		);
+	}
+
+	private cancelConnectionExtensionUiRequest(requestId: string): void {
+		const request = this.activeConnectionExtensionUiRequests.get(requestId);
+		if (!request) {
+			return;
+		}
+		this.activeConnectionExtensionUiRequests.delete(requestId);
+		request.cancelLocal();
 	}
 
 	private cancelActiveConnectionExtensionUiRequests(): void {

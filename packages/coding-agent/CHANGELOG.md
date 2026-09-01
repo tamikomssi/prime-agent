@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Fixed daemon-aborted extension dialogs remaining live in the interactive client and sending a stale response after another client had already decided the request.
+
 ## [0.9.1] - 2026-09-01
 
 - Fixed a v0.9.0 regression: the agents view's Inactive section was empty on a fresh view until a search was typed. The saved-session catalog now loads (progressively) when the view opens; it was previously deferred to search because the roster's boot seed carried the saved corpus, which the seed scoping removed.

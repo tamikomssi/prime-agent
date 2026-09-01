@@ -159,7 +159,13 @@ function createExtensionUIContext(
 					clearTimeout(timeoutId);
 				}
 				opts?.signal?.removeEventListener("abort", onAbort);
-				state.extensionUiRequests.delete(requestId);
+				if (state.extensionUiRequests.delete(requestId)) {
+					broadcast(state, {
+						type: "extension_ui_cancelled",
+						activeSessionId: state.activeSessionId,
+						id: requestId,
+					});
+				}
 			};
 			const finish = (value: T) => {
 				cleanup();

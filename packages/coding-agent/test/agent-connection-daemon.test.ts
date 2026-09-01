@@ -2800,7 +2800,14 @@ describe("DaemonAgentConnection", () => {
 		expect(fakeClient.requests.at(-1)).toMatchObject({
 			type: "attach",
 			activeSessionId: "active-1",
-			capabilities: ["attach_snapshot", "event_sequence", "extension_ui", "slim_attach", "chunked_snapshot"],
+			capabilities: [
+				"attach_snapshot",
+				"event_sequence",
+				"extension_ui",
+				"extension_ui_cancellation",
+				"slim_attach",
+				"chunked_snapshot",
+			],
 			resumeCursor: {
 				activeSessionId: "active-1",
 				generation: "generation-active-1",
@@ -3475,7 +3482,14 @@ describe("DaemonAgentConnection", () => {
 			type: "attach",
 			activeSessionId: "active-1",
 			clientId: expect.any(String),
-			capabilities: ["attach_snapshot", "event_sequence", "extension_ui", "slim_attach", "chunked_snapshot"],
+			capabilities: [
+				"attach_snapshot",
+				"event_sequence",
+				"extension_ui",
+				"extension_ui_cancellation",
+				"slim_attach",
+				"chunked_snapshot",
+			],
 			resumeCursor: {
 				activeSessionId: "active-1",
 				generation: "generation-active-1",
@@ -3487,7 +3501,14 @@ describe("DaemonAgentConnection", () => {
 		expect(fakeClient.requests.at(-1)).toMatchObject({
 			type: "attach",
 			activeSessionId: "active-1",
-			capabilities: ["attach_snapshot", "event_sequence", "extension_ui", "slim_attach", "chunked_snapshot"],
+			capabilities: [
+				"attach_snapshot",
+				"event_sequence",
+				"extension_ui",
+				"extension_ui_cancellation",
+				"slim_attach",
+				"chunked_snapshot",
+			],
 			resumeCursor: {
 				activeSessionId: "active-1",
 				generation: "generation-active-1",
@@ -3533,7 +3554,7 @@ describe("DaemonAgentConnection", () => {
 		});
 	});
 
-	it("forwards extension UI requests and responses", async () => {
+	it("forwards extension UI requests, cancellations, and responses", async () => {
 		const fakeClient = new FakeDaemonClient();
 		const connection = new DaemonAgentConnection(asDaemonClient(fakeClient), "active-1");
 		const events: AgentConnectionEvent[] = [];
@@ -3546,7 +3567,14 @@ describe("DaemonAgentConnection", () => {
 			activeSessionId: "active-1",
 			supportsExtensionUi: true,
 			clientId: expect.any(String),
-			capabilities: ["attach_snapshot", "event_sequence", "extension_ui", "slim_attach", "chunked_snapshot"],
+			capabilities: [
+				"attach_snapshot",
+				"event_sequence",
+				"extension_ui",
+				"extension_ui_cancellation",
+				"slim_attach",
+				"chunked_snapshot",
+			],
 		});
 
 		fakeClient.emitMessage({
@@ -3563,6 +3591,16 @@ describe("DaemonAgentConnection", () => {
 			method: "confirm",
 			payload: { title: "Ignore", message: "Wrong session" },
 		});
+		fakeClient.emitMessage({
+			type: "extension_ui_cancelled",
+			activeSessionId: "active-1",
+			id: "request-1",
+		});
+		fakeClient.emitMessage({
+			type: "extension_ui_cancelled",
+			activeSessionId: "other",
+			id: "request-2",
+		});
 
 		expect(events).toEqual([
 			{
@@ -3573,6 +3611,7 @@ describe("DaemonAgentConnection", () => {
 					payload: { title: "Confirm", message: "Proceed?" },
 				},
 			},
+			{ type: "extension_ui_cancelled", requestId: "request-1" },
 		]);
 
 		await connection.respondToExtensionUiRequest("request-1", { confirmed: true });

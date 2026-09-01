@@ -7486,6 +7486,7 @@ type SequencedDaemonOutbound = Extract<
 			| "session_resynced"
 			| "session_closed"
 			| "extension_ui_request"
+			| "extension_ui_cancelled"
 			| "extension_error";
 	}
 >;
@@ -7498,11 +7499,15 @@ function isSequencedSessionOutbound(message: DaemonOutbound): message is Sequenc
 		message.type === "session_resynced" ||
 		message.type === "session_closed" ||
 		message.type === "extension_ui_request" ||
+		message.type === "extension_ui_cancelled" ||
 		message.type === "extension_error"
 	);
 }
 
 export function shouldSendDaemonOutboundToClient(client: DaemonSocketClient, message: DaemonOutbound): boolean {
+	if (message.type === "extension_ui_cancelled") {
+		return daemonClientCapabilitiesForSession(client, message.activeSessionId).has("extension_ui_cancellation");
+	}
 	return (
 		message.type !== "extension_ui_request" ||
 		!isDaemonDialogExtensionUiRequest(message.method) ||

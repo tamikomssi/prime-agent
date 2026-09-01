@@ -258,6 +258,15 @@ describe("daemon protocol helpers", () => {
 		expect(DAEMON_DEFAULT_SERVER_CAPABILITIES).toContain("owned_prompt_cancellation");
 	});
 
+	it("capability-gates exact extension UI cancellation", () => {
+		expect(DAEMON_OUTBOUND_COMPATIBILITY.extension_ui_cancelled).toEqual({
+			minProtocol: 7,
+			minSchemaRevision: 26,
+			capability: "extension_ui_cancellation",
+		});
+		expect(DAEMON_DEFAULT_SERVER_CAPABILITIES).toContain("extension_ui_cancellation");
+	});
+
 	it("gates honest worker-state reporting at its introducing schema revision", () => {
 		// Revision 16 adds the "stopping" workerState and stops reporting
 		// disconnected workers as "ready". The field is optional and old clients

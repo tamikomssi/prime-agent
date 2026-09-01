@@ -80,7 +80,7 @@ An initial or replacement snapshot combines:
 - active RLM child snapshots; and
 - an in-progress assistant message when one exists.
 
-Connection events cover session events, replacement and resynchronization snapshots, extension UI requests, connection status, and terminal closure. The adapter updates its cache before notifying the UI.
+Connection events cover session events, replacement and resynchronization snapshots, extension UI requests and exact-request cancellations, connection status, and terminal closure. The adapter updates its cache before notifying the UI.
 
 Some connection types still reuse internal `AgentMessage`, `AgentEvent`, and model types. Those are local TypeScript contracts, not promises of a stable public network schema.
 
@@ -116,7 +116,7 @@ When switching to a session already owned by another resident worker, a non-owne
 
 ## Extension UI Boundary
 
-Daemon-owned extensions can request serializable UI operations such as select, confirm, input, editor, notification, status, widget, title, and editor-text updates. The client validates the payload and returns a serializable response.
+Daemon-owned extensions can request serializable UI operations such as select, confirm, input, editor, notification, status, widget, title, and editor-text updates. The client validates the payload and returns a serializable response. If the daemon aborts or times out a pending dialog, it sends a capability-gated cancellation for that exact request ID; the interactive client retires only that request without sending a response.
 
 Executable callbacks are deliberately excluded:
 

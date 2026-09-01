@@ -70,8 +70,9 @@ export const DAEMON_COMMAND_ENVELOPE_MIN_PROTOCOL_VERSION = 7;
 // Revision 23 lets workers query the supervisor agent roster on demand.
 // Revision 24 adds the capability-gated agent-roster subscription and push.
 // Revision 25 adds capability-gated direct worker peer transport discovery.
-export const DAEMON_SCHEMA_REVISION = 25;
-export const DAEMON_SCHEMA_ID = "protocol-7-schema-25-585ef1102921";
+// Revision 26 adds capability-gated exact-request extension UI cancellation.
+export const DAEMON_SCHEMA_REVISION = 26;
+export const DAEMON_SCHEMA_ID = "protocol-7-schema-26-d8e58a76429e";
 
 export type DaemonProtocolName = typeof DAEMON_PROTOCOL_NAME;
 export type DaemonProtocolVersion = number;
@@ -87,6 +88,7 @@ export type DaemonClientCapability =
 	| "attach_snapshot"
 	| "event_sequence"
 	| "extension_ui"
+	| "extension_ui_cancellation"
 	| "slim_attach"
 	| "chunked_snapshot"
 	| "client_owned_sessions";
@@ -141,6 +143,7 @@ export const DAEMON_SUPPORTED_CLIENT_CAPABILITIES: readonly DaemonClientCapabili
 	"attach_snapshot",
 	"event_sequence",
 	"extension_ui",
+	"extension_ui_cancellation",
 	"slim_attach",
 	"chunked_snapshot",
 	"client_owned_sessions",
@@ -1213,6 +1216,11 @@ export const DAEMON_OUTBOUND_COMPATIBILITY = {
 	session_detached: LEGACY_DAEMON_COMMAND,
 	session_closed: LEGACY_DAEMON_COMMAND,
 	extension_ui_request: LEGACY_DAEMON_COMMAND,
+	extension_ui_cancelled: {
+		minProtocol: 7,
+		minSchemaRevision: 26,
+		capability: "extension_ui_cancellation",
+	},
 	extension_error: LEGACY_DAEMON_COMMAND,
 } as const satisfies Record<DaemonOutbound["type"], DaemonCommandCompatibility>;
 

@@ -3173,12 +3173,27 @@ describe("daemon mode helpers", () => {
 			}),
 		).toBe(true);
 
-		setDaemonClientSessionCapabilities(uiClient, "active", new Set(["extension_ui"]));
+		const cancellation = {
+			type: "extension_ui_cancelled",
+			activeSessionId: "active",
+			id: "request-1",
+		} as const;
+		expect(shouldSendDaemonOutboundToClient(lineClient, cancellation)).toBe(false);
+		expect(shouldSendDaemonOutboundToClient(uiClient, cancellation)).toBe(false);
+
+		setDaemonClientSessionCapabilities(uiClient, "active", new Set(["extension_ui", "extension_ui_cancellation"]));
 		setDaemonClientSessionCapabilities(uiClient, "other", new Set());
 		expect(shouldSendDaemonOutboundToClient(uiClient, dialogRequest)).toBe(true);
+		expect(shouldSendDaemonOutboundToClient(uiClient, cancellation)).toBe(true);
 		expect(
 			shouldSendDaemonOutboundToClient(uiClient, {
 				...dialogRequest,
+				activeSessionId: "other",
+			}),
+		).toBe(false);
+		expect(
+			shouldSendDaemonOutboundToClient(uiClient, {
+				...cancellation,
 				activeSessionId: "other",
 			}),
 		).toBe(false);
