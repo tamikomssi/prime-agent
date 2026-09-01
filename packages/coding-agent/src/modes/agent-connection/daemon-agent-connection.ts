@@ -305,7 +305,7 @@ export class DaemonAgentConnection implements AgentConnection {
 			capabilities: [
 				"attach_snapshot",
 				"event_sequence",
-				...(supportsExtensionUi ? (["extension_ui"] as const) : []),
+				...(supportsExtensionUi ? (["extension_ui", "extension_ui_cancellation"] as const) : []),
 				"slim_attach",
 				"chunked_snapshot",
 				...(this.options.ownedSession ? (["client_owned_sessions"] as const) : []),
@@ -1156,7 +1156,7 @@ export class DaemonAgentConnection implements AgentConnection {
 				capabilities: [
 					"attach_snapshot",
 					"event_sequence",
-					...(supportsExtensionUi ? (["extension_ui"] as const) : []),
+					...(supportsExtensionUi ? (["extension_ui", "extension_ui_cancellation"] as const) : []),
 					"slim_attach",
 					"chunked_snapshot",
 					...(this.options.ownedSession ? (["client_owned_sessions"] as const) : []),
@@ -1553,6 +1553,10 @@ export class DaemonAgentConnection implements AgentConnection {
 					payload: message.payload,
 				},
 			});
+			return;
+		}
+		if (message.type === "extension_ui_cancelled") {
+			await this.emit({ type: "extension_ui_cancelled", requestId: message.id });
 			return;
 		}
 		if (message.type === "extension_error") {

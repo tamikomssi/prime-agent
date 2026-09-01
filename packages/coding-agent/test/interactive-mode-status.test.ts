@@ -1623,6 +1623,7 @@ describe("InteractiveMode connection extension UI", () => {
 		};
 		showError(message: string): void;
 		cancelActiveConnectionExtensionUiRequests(): void;
+		cancelConnectionExtensionUiRequest(requestId: string): void;
 	};
 
 	type ConnectionExtensionUiHandlerHarness = ConnectionExtensionUiCancelHarness & {
@@ -1684,6 +1685,44 @@ describe("InteractiveMode connection extension UI", () => {
 			cancelled: true,
 		});
 		expect(fakeThis.activeConnectionExtensionUiRequests.size).toBe(0);
+	});
+
+	test("daemon abort cancellation retires the exact request before a late local response", async () => {
+		const fakeThis = Object.create(InteractiveMode.prototype) as ConnectionExtensionUiHandlerHarness;
+		fakeThis.activeConnectionExtensionUiRequests = new Map();
+		fakeThis.agentConnection = {
+			respondToExtensionUiRequest: vi.fn(async () => {
+				throw new Error("Unknown extension UI request: request-1");
+			}),
+		};
+		fakeThis.showError = vi.fn();
+		let resolveLateResponse: ((response: AgentConnectionExtensionUiResponse) => void) | undefined;
+		fakeThis.resolveConnectionExtensionUiRequest = vi.fn(
+			() =>
+				new Promise<AgentConnectionExtensionUiResponse | undefined>((resolve) => {
+					resolveLateResponse = resolve;
+				}),
+		);
+
+		const request: AgentConnectionExtensionUiRequest = {
+			id: "request-1",
+			method: "confirm",
+			payload: {},
+		};
+		const handling = prototype.handleConnectionExtensionUiRequest.call(fakeThis, request);
+		expect(fakeThis.activeConnectionExtensionUiRequests.has(request.id)).toBe(true);
+
+		const cancelRequest = prototype.cancelConnectionExtensionUiRequest as ((requestId: string) => void) | undefined;
+		cancelRequest?.call(fakeThis, "unknown-request");
+		expect(fakeThis.activeConnectionExtensionUiRequests.has(request.id)).toBe(true);
+
+		cancelRequest?.call(fakeThis, request.id);
+		resolveLateResponse?.({ confirmed: true });
+		await handling;
+
+		expect(fakeThis.activeConnectionExtensionUiRequests.has(request.id)).toBe(false);
+		expect(fakeThis.agentConnection.respondToExtensionUiRequest).not.toHaveBeenCalled();
+		expect(fakeThis.showError).not.toHaveBeenCalled();
 	});
 });
 
