@@ -205,6 +205,57 @@ describe("daemon extension binding", () => {
 		});
 	});
 
+	it("does not broadcast cancellation after a valid daemon extension response", async () => {
+		let markDialogStarted: (() => void) | undefined;
+		const dialogStarted = new Promise<void>((resolve) => {
+			markDialogStarted = resolve;
+		});
+		let dialogResult: boolean | undefined;
+		const runtime = await createRuntimeForTest((pi) => {
+			pi.registerCommand("answered-dialog", {
+				description: "answered dialog",
+				handler: async (_args, ctx) => {
+					markDialogStarted?.();
+					dialogResult = await ctx.ui.confirm("Continue?", "Confirm action");
+				},
+			});
+		}, []);
+
+		const outbound: DaemonOutbound[] = [];
+		const state: ActiveSessionState = {
+			activeSessionId: "active-answered-dialog",
+			runtime,
+			clients: new Set([{ supportsExtensionUi: true }] as never[]),
+			pendingAttaches: 0,
+			extensionUiRequests: new Map(),
+			eventGeneration: "generation-answered-dialog",
+			lastEventSequence: 0,
+		};
+		await bindActiveSessionState(state, {
+			broadcast: (_state, message) => {
+				outbound.push(message);
+			},
+			shutdown: () => {},
+		});
+
+		const prompt = runtime.session.prompt("/answered-dialog");
+		await dialogStarted;
+		const request = outbound.find(
+			(message): message is Extract<DaemonOutbound, { type: "extension_ui_request" }> =>
+				message.type === "extension_ui_request",
+		);
+		expect(request).toBeDefined();
+		const pending = state.extensionUiRequests.get(request?.id ?? "");
+		expect(pending).toBeDefined();
+
+		state.extensionUiRequests.delete(request?.id ?? "");
+		pending?.resolve({ confirmed: true });
+		await prompt;
+
+		expect(dialogResult).toBe(true);
+		expect(outbound.filter((message) => message.type === "extension_ui_cancelled")).toEqual([]);
+	});
+
 	it("keeps extension replacement callbacks daemon-side and rebinds before withSession", async () => {
 		const phases: string[] = [];
 		let oldSessionFile: string | undefined;
