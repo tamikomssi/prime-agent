@@ -40,6 +40,7 @@ import {
 	type DaemonAttachResult,
 	type DaemonCommand,
 	type DaemonOutbound,
+	type DaemonResponse,
 	failure,
 } from "../src/modes/daemon/daemon-protocol.js";
 import type { SessionSummary } from "../src/modes/daemon/daemon-session-list.js";
@@ -182,6 +183,69 @@ describe("daemon mode helpers", () => {
 
 		expect(state.extensionUiRequests.size).toBe(0);
 		expect(resolve).toHaveBeenCalledWith({ cancelled: true });
+	});
+
+	it("removes a pending extension UI request before resolving its valid response", async () => {
+		const daemon = new AgentDaemon("/tmp/prime-agent-test.sock", {
+			defaultSessionConfig: { agentDir: "/tmp/prime-agent-test-agent", cwd: "/tmp" },
+			createRuntime: async () => {
+				throw new Error("unexpected runtime creation");
+			},
+		});
+		const client = makeClient("client-1", "active");
+		const resolve = vi.fn();
+		const state = {
+			...makeState("active"),
+			clients: new Set<DaemonSocketClient>([client]),
+			extensionUiRequests: new Map([["request-1", { resolve }]]),
+		};
+		const internals = daemon as unknown as {
+			sessions: Map<string, ActiveSessionState>;
+			handleCommand(client: DaemonSocketClient, command: DaemonCommand): Promise<DaemonResponse | undefined>;
+		};
+		internals.sessions.set(state.activeSessionId, state);
+
+		const response = await internals.handleCommand(client, {
+			id: "response-1",
+			type: "extension_ui_response",
+			activeSessionId: state.activeSessionId,
+			requestId: "request-1",
+			response: { confirmed: true },
+		});
+
+		expect(response).toMatchObject({ success: true, command: "extension_ui_response" });
+		expect(state.extensionUiRequests.has("request-1")).toBe(false);
+		expect(resolve).toHaveBeenCalledWith({ confirmed: true });
+	});
+
+	it("rejects a truly unknown extension UI response", async () => {
+		const daemon = new AgentDaemon("/tmp/prime-agent-test.sock", {
+			defaultSessionConfig: { agentDir: "/tmp/prime-agent-test-agent", cwd: "/tmp" },
+			createRuntime: async () => {
+				throw new Error("unexpected runtime creation");
+			},
+		});
+		const client = makeClient("client-1", "active");
+		const state = {
+			...makeState("active"),
+			clients: new Set<DaemonSocketClient>([client]),
+			extensionUiRequests: new Map(),
+		};
+		const internals = daemon as unknown as {
+			sessions: Map<string, ActiveSessionState>;
+			handleCommand(client: DaemonSocketClient, command: DaemonCommand): Promise<DaemonResponse | undefined>;
+		};
+		internals.sessions.set(state.activeSessionId, state);
+
+		await expect(
+			internals.handleCommand(client, {
+				id: "response-unknown",
+				type: "extension_ui_response",
+				activeSessionId: state.activeSessionId,
+				requestId: "unknown-request",
+				response: { confirmed: true },
+			}),
+		).rejects.toThrow("Unknown extension UI request: unknown-request");
 	});
 
 	it("acknowledges agent messages after target prompt preflight succeeds", async () => {
@@ -4056,12 +4120,27 @@ describe("daemon mode helpers", () => {
 			}),
 		).toBe(true);
 
-		setDaemonClientSessionCapabilities(uiClient, "active", new Set(["extension_ui"]));
+		const cancellation = {
+			type: "extension_ui_cancelled",
+			activeSessionId: "active",
+			id: "request-1",
+		} as const;
+		expect(shouldSendDaemonOutboundToClient(lineClient, cancellation)).toBe(false);
+		expect(shouldSendDaemonOutboundToClient(uiClient, cancellation)).toBe(false);
+
+		setDaemonClientSessionCapabilities(uiClient, "active", new Set(["extension_ui", "extension_ui_cancellation"]));
 		setDaemonClientSessionCapabilities(uiClient, "other", new Set());
 		expect(shouldSendDaemonOutboundToClient(uiClient, dialogRequest)).toBe(true);
+		expect(shouldSendDaemonOutboundToClient(uiClient, cancellation)).toBe(true);
 		expect(
 			shouldSendDaemonOutboundToClient(uiClient, {
 				...dialogRequest,
+				activeSessionId: "other",
+			}),
+		).toBe(false);
+		expect(
+			shouldSendDaemonOutboundToClient(uiClient, {
+				...cancellation,
 				activeSessionId: "other",
 			}),
 		).toBe(false);
