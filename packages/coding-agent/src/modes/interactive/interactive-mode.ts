@@ -3906,18 +3906,35 @@ export class InteractiveMode {
 	/**
 	 * Show a multi-line editor for extensions (with Ctrl+G support).
 	 */
-	private showExtensionEditor(title: string, prefill?: string): Promise<string | undefined> {
+	private showExtensionEditor(
+		title: string,
+		prefill?: string,
+		opts?: ExtensionUIDialogOptions,
+	): Promise<string | undefined> {
 		return new Promise((resolve) => {
+			if (opts?.signal?.aborted) {
+				resolve(undefined);
+				return;
+			}
+
+			const onAbort = () => {
+				this.hideExtensionEditor();
+				resolve(undefined);
+			};
+			opts?.signal?.addEventListener("abort", onAbort, { once: true });
+
 			this.extensionEditor = new ExtensionEditorComponent(
 				this.ui,
 				this.keybindings,
 				title,
 				prefill,
 				(value) => {
+					opts?.signal?.removeEventListener("abort", onAbort);
 					this.hideExtensionEditor();
 					resolve(value);
 				},
 				() => {
+					opts?.signal?.removeEventListener("abort", onAbort);
 					this.hideExtensionEditor();
 					resolve(undefined);
 				},
@@ -5162,14 +5179,21 @@ export class InteractiveMode {
 
 		try {
 			if (expectsResponse) {
+				const dialogController = new AbortController();
 				let cancelLocal: (response: AgentConnectionExtensionUiResponse) => void = () => {};
 				const cancelled = new Promise<AgentConnectionExtensionUiResponse>((resolve) => {
 					cancelLocal = resolve;
 				});
 				this.activeConnectionExtensionUiRequests.set(request.id, {
-					cancelLocal: () => cancelLocal({ cancelled: true }),
+					cancelLocal: () => {
+						dialogController.abort();
+						cancelLocal({ cancelled: true });
+					},
 				});
-				response = await Promise.race([this.resolveConnectionExtensionUiRequest(request), cancelled]);
+				response = await Promise.race([
+					this.resolveConnectionExtensionUiRequest(request, dialogController.signal),
+					cancelled,
+				]);
 			} else {
 				response = await this.resolveConnectionExtensionUiRequest(request);
 			}
@@ -5229,6 +5253,7 @@ export class InteractiveMode {
 
 	private async resolveConnectionExtensionUiRequest(
 		request: AgentConnectionExtensionUiRequest,
+		signal?: AbortSignal,
 	): Promise<AgentConnectionExtensionUiResponse | undefined> {
 		const { payload } = request;
 		switch (request.method) {
@@ -5240,6 +5265,7 @@ export class InteractiveMode {
 				}
 				const value = await this.showExtensionSelector(title, options, {
 					timeout: getPayloadNumber(payload, "timeout"),
+					signal,
 				});
 				return value === undefined ? { cancelled: true } : { value };
 			}
@@ -5251,6 +5277,7 @@ export class InteractiveMode {
 				}
 				const confirmed = await this.showExtensionConfirm(title, message, {
 					timeout: getPayloadNumber(payload, "timeout"),
+					signal,
 				});
 				return { confirmed };
 			}
@@ -5261,6 +5288,7 @@ export class InteractiveMode {
 				}
 				const value = await this.showExtensionInput(title, getPayloadString(payload, "placeholder"), {
 					timeout: getPayloadNumber(payload, "timeout"),
+					signal,
 				});
 				return value === undefined ? { cancelled: true } : { value };
 			}
@@ -5269,7 +5297,7 @@ export class InteractiveMode {
 				if (!title) {
 					return { cancelled: true };
 				}
-				const value = await this.showExtensionEditor(title, getPayloadString(payload, "prefill"));
+				const value = await this.showExtensionEditor(title, getPayloadString(payload, "prefill"), { signal });
 				return value === undefined ? { cancelled: true } : { value };
 			}
 			case "notify": {
