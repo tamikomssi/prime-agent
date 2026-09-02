@@ -1821,6 +1821,10 @@ export class DaemonAgentConnection implements AgentConnection {
 			});
 			return;
 		}
+		if (message.type === "extension_ui_cancelled") {
+			await this.emit({ type: "extension_ui_cancelled", requestId: message.id });
+			return;
+		}
 		if (message.type === "extension_error") {
 			await this.emit({
 				type: "extension_error",
