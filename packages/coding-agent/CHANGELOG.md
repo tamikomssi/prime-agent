@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-- Fixed daemon-aborted extension dialogs remaining live in the interactive client and sending a stale response after another client had already decided the request.
+- Fixed daemon-aborted or timed-out extension dialogs remaining live in the interactive client and later sending a stale response.
 
 ## [0.9.1] - 2026-09-01
 
