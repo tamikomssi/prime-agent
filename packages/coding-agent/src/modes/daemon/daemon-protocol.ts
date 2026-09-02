@@ -1187,6 +1187,12 @@ export type DaemonOutbound =
 			meta?: DaemonEventMeta;
 	  }
 	| {
+			type: "extension_ui_cancelled";
+			activeSessionId: string;
+			id: string;
+			meta?: DaemonEventMeta;
+	  }
+	| {
 			type: "extension_error";
 			activeSessionId: string;
 			extensionPath: string;

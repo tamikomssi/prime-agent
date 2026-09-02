@@ -384,9 +384,7 @@ export class DaemonAgentConnection implements AgentConnection {
 				capabilities: [
 					"attach_snapshot",
 					"event_sequence",
-					...(supportsExtensionUi
-						? (["extension_ui", "extension_ui_cancellation"] as const)
-						: []),
+					...(supportsExtensionUi ? (["extension_ui", "extension_ui_cancellation"] as const) : []),
 					"slim_attach",
 					"chunked_snapshot",
 					...(this.options.ownedSession ? (["client_owned_sessions"] as const) : []),
@@ -1366,9 +1364,7 @@ export class DaemonAgentConnection implements AgentConnection {
 				capabilities: [
 					"attach_snapshot",
 					"event_sequence",
-					...(supportsExtensionUi
-						? (["extension_ui", "extension_ui_cancellation"] as const)
-						: []),
+					...(supportsExtensionUi ? (["extension_ui", "extension_ui_cancellation"] as const) : []),
 					"slim_attach",
 					"chunked_snapshot",
 					...(this.options.ownedSession ? (["client_owned_sessions"] as const) : []),
