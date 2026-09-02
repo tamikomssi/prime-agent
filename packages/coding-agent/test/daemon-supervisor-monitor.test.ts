@@ -3882,6 +3882,91 @@ describe("daemon worker supervisor monitoring", () => {
 		});
 	});
 
+	it("propagates extension UI cancellation capability to a session worker", async () => {
+		type SubscriptionWorker = {
+			client: { requestWorker: (command: unknown) => Promise<{ success: boolean }> };
+		};
+		const activeSessionId = "active-extension-ui-cancellation";
+		const requestWorker = vi.fn(async () => ({ success: true }));
+		const worker: SubscriptionWorker = { client: { requestWorker } };
+		const client = {
+			attachedActiveSessionIds: new Set([activeSessionId]),
+			supportsExtensionUi: true,
+			capabilities: new Set(["extension_ui", "extension_ui_cancellation"]),
+		};
+		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			clients: new Set([client]),
+		}) as {
+			subscribeWorker(worker: SubscriptionWorker, activeSessionId: string): Promise<void>;
+		};
+
+		await supervisor.subscribeWorker(worker, activeSessionId);
+
+		expect(requestWorker).toHaveBeenCalledWith({
+			type: "worker_subscribe",
+			activeSessionId,
+			capabilities: [
+				"attach_snapshot",
+				"event_sequence",
+				"extension_ui",
+				"extension_ui_cancellation",
+				"slim_attach",
+				"chunked_snapshot",
+			],
+			supportsExtensionUi: true,
+		});
+	});
+
+	it("forwards extension UI cancellation only to capable attached clients", () => {
+		const activeSessionId = "active-extension-ui-cancellation";
+		const capableWrites: string[] = [];
+		const legacyWrites: string[] = [];
+		const client = (writes: string[], cancellation: boolean) =>
+			({
+				id: cancellation ? "capable" : "legacy",
+				socket: {
+					destroyed: false,
+					write: (value: string | Buffer) => {
+						writes.push(value.toString());
+						return true;
+					},
+				},
+				attachedActiveSessionIds: new Set([activeSessionId]),
+				catchupActiveSessionIds: new Set<string>(),
+				backpressured: false,
+				supportsExtensionUi: true,
+				capabilities: new Set(cancellation ? ["extension_ui", "extension_ui_cancellation"] : ["extension_ui"]),
+			}) as unknown as DaemonSocketClient;
+		const worker = {
+			snapshotCache: new Map(),
+			transcriptCaches: new Map(),
+			incomingTranscriptActiveSessionIds: new Set(),
+			duplicateIncomingTranscriptChunkIndexes: new Map(),
+			snapshotTransferFrames: new Map(),
+		};
+		const supervisor = Object.assign(Object.create(DaemonSupervisor.prototype), {
+			clients: new Set([client(capableWrites, true), client(legacyWrites, false)]),
+			streamReconstructor: { observe: vi.fn() },
+			invalidateWorkerSnapshot: vi.fn(),
+		}) as {
+			handleWorkerFrame(residentWorker: typeof worker, frame: PrivateFrame<DaemonWorkerFrameHeader>): void;
+		};
+		const outbound = {
+			type: "extension_ui_cancelled" as const,
+			activeSessionId,
+			id: "request-1",
+		};
+
+		supervisor.handleWorkerFrame(worker, {
+			header: { kind: "outbound", outboundType: outbound.type, activeSessionId },
+			payload: Buffer.from(`${JSON.stringify(outbound)}\n`),
+		});
+
+		expect(capableWrites).toHaveLength(1);
+		expect(capableWrites[0]).toContain('"id":"request-1"');
+		expect(legacyWrites).toEqual([]);
+	});
+
 	it("does not retain an attachment when snapshot loading fails", async () => {
 		type AttachClient = {
 			id: string;

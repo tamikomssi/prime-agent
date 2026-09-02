@@ -3141,15 +3141,24 @@ export class DaemonSupervisor {
 		if (!worker.client) {
 			throw new Error("Session worker is not connected");
 		}
-		const supportsExtensionUi = [...this.clients].some(
-			(client) => client.attachedActiveSessionIds.has(activeSessionId) && client.supportsExtensionUi,
+		const attachedClients = [...this.clients].filter((client) =>
+			client.attachedActiveSessionIds.has(activeSessionId),
+		);
+		const supportsExtensionUi = attachedClients.some((client) => client.supportsExtensionUi);
+		const supportsExtensionUiCancellation = attachedClients.some(
+			(client) => client.supportsExtensionUi && client.capabilities.has("extension_ui_cancellation"),
 		);
 		const response = await worker.client.requestWorker({
 			type: "worker_subscribe",
 			activeSessionId,
-			capabilities: supportsExtensionUi
-				? ["attach_snapshot", "event_sequence", "extension_ui", "slim_attach", "chunked_snapshot"]
-				: ["attach_snapshot", "event_sequence", "slim_attach", "chunked_snapshot"],
+			capabilities: [
+				"attach_snapshot",
+				"event_sequence",
+				...(supportsExtensionUi ? (["extension_ui"] as const) : []),
+				...(supportsExtensionUiCancellation ? (["extension_ui_cancellation"] as const) : []),
+				"slim_attach",
+				"chunked_snapshot",
+			],
 			supportsExtensionUi,
 		});
 		if (!response.success) {
@@ -5557,6 +5566,9 @@ export class DaemonSupervisor {
 				continue;
 			}
 			if (outboundType === "extension_ui_request" && !client.supportsExtensionUi) {
+				continue;
+			}
+			if (outboundType === "extension_ui_cancelled" && !client.capabilities.has("extension_ui_cancellation")) {
 				continue;
 			}
 			if (client.snapshotActiveSessionIds?.has(activeSessionId)) {
