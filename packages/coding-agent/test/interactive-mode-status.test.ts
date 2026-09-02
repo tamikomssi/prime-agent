@@ -1949,6 +1949,7 @@ describe("InteractiveMode connection extension UI", () => {
 	type ConnectionExtensionUiHandlerHarness = ConnectionExtensionUiCancelHarness & {
 		resolveConnectionExtensionUiRequest(
 			request: AgentConnectionExtensionUiRequest,
+			signal?: AbortSignal,
 		): Promise<AgentConnectionExtensionUiResponse | undefined>;
 		handleConnectionExtensionUiRequest(request: AgentConnectionExtensionUiRequest): Promise<void>;
 	};
@@ -2017,9 +2018,11 @@ describe("InteractiveMode connection extension UI", () => {
 		};
 		fakeThis.showError = vi.fn();
 		let resolveLateResponse: ((response: AgentConnectionExtensionUiResponse) => void) | undefined;
+		let dialogSignal: AbortSignal | undefined;
 		fakeThis.resolveConnectionExtensionUiRequest = vi.fn(
-			() =>
+			(_request, signal) =>
 				new Promise<AgentConnectionExtensionUiResponse | undefined>((resolve) => {
+					dialogSignal = signal;
 					resolveLateResponse = resolve;
 				}),
 		);
@@ -2037,6 +2040,7 @@ describe("InteractiveMode connection extension UI", () => {
 		expect(fakeThis.activeConnectionExtensionUiRequests.has(request.id)).toBe(true);
 
 		cancelRequest?.call(fakeThis, request.id);
+		expect(dialogSignal?.aborted).toBe(true);
 		resolveLateResponse?.({ confirmed: true });
 		await handling;
 
