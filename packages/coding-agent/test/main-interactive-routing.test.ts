@@ -496,3 +496,15 @@ function makeSessionSummary(overrides: Partial<SessionSummary>): SessionSummary 
 		isSessionActive: overrides.isSessionActive ?? false,
 	};
 }
+
+describe("runtime subprocess provider selection", () => {
+	test("prefers the runtime provider and otherwise keeps the base provider", () => {
+		const base = () => ({ PI_SLACK_CONSENT_MODE: "slack" });
+		const runtime = () => ({ PI_SLACK_CONSENT_MODE: undefined });
+		expect(
+			resolveRuntimeSessionOptions({ execEnvProvider: base }, { execEnvProvider: runtime }).execEnvProvider,
+		).toBe(runtime);
+		expect(resolveRuntimeSessionOptions({ execEnvProvider: base }, {}).execEnvProvider).toBe(base);
+		expect(resolveRuntimeSessionOptions({}, {}).execEnvProvider).toBeUndefined();
+	});
+});

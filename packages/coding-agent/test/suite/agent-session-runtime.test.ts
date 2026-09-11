@@ -21,6 +21,7 @@ import {
 	SEMANTIC_EDGES_LEDGER_FILENAME,
 } from "../../src/core/semantic-edges.js";
 import { SessionManager } from "../../src/core/session-manager.js";
+import { IpythonKernelProvisioner } from "../../src/core/tools/ipython.js";
 import type {
 	ExtensionAPI,
 	ExtensionFactory,
@@ -30,6 +31,7 @@ import type {
 	SessionStartEvent,
 } from "../../src/index.js";
 import { createDefaultRuntimeFactory } from "../../src/main.js";
+import { execEnvForSession } from "../../src/modes/daemon/daemon-client-env.js";
 
 type RecordedSessionEvent =
 	| SessionBeforeSwitchEvent
@@ -453,6 +455,73 @@ describe("AgentSessionRuntime characterization", () => {
 		});
 		await runtime.deleteRlmSubagentRuntime("lineage-child", childRuntime.session);
 	});
+
+	it.each(["local-auto-approve", "slack", undefined])(
+		"preserves consent %s through production factory before root prewarm",
+		async (mode) => {
+			const tempDir = join(tmpdir(), `pi-runtime-consent-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+			mkdirSync(tempDir, { recursive: true });
+			cleanups.push(() => rmSync(tempDir, { recursive: true, force: true }));
+			const faux = registerFauxProvider({ models: [{ id: "faux-1", reasoning: false }] });
+			cleanups.push(() => faux.unregister());
+			const seen: Array<Record<string, string | undefined>> = [];
+			const prewarm = vi.spyOn(IpythonKernelProvisioner.prototype, "prewarm").mockImplementation(function (
+				this: IpythonKernelProvisioner,
+			) {
+				const options = Reflect.get(this, "options") as { env: () => Record<string, string | undefined> };
+				seen.push(options.env());
+			});
+			cleanups.push(() => prewarm.mockRestore());
+			const factory = createDefaultRuntimeFactory(
+				{
+					agentDir: tempDir,
+					cwd: tempDir,
+					sessionDir: join(tempDir, "sessions"),
+					noSkills: true,
+					noPromptTemplates: true,
+					noThemes: true,
+					telemetryDisabled: true,
+				},
+				[
+					(pi: ExtensionAPI) => {
+						pi.registerProvider(faux.getModel().provider, {
+							baseUrl: faux.getModel().baseUrl,
+							apiKey: "faux-key",
+							api: faux.api,
+							models: faux.models.map((model) => ({
+								id: model.id,
+								name: model.name,
+								api: model.api,
+								reasoning: model.reasoning,
+								input: model.input,
+								cost: model.cost,
+								contextWindow: model.contextWindow,
+								maxTokens: model.maxTokens,
+							})),
+						});
+					},
+				],
+			);
+			const created = await factory({
+				cwd: tempDir,
+				agentDir: tempDir,
+				sessionManager: SessionManager.create(tempDir, join(tempDir, "sessions")),
+				sessionOptions: {
+					model: faux.getModel(),
+					rlmDepth: 0,
+					execEnvProvider: () =>
+						execEnvForSession(mode === undefined ? undefined : { PI_SLACK_CONSENT_MODE: mode }),
+				},
+			});
+			cleanups.push(() => created.session.dispose());
+			expect(seen.length).toBeGreaterThan(0);
+			for (const env of seen) {
+				expect(Object.hasOwn(env, "PI_SLACK_CONSENT_MODE")).toBe(true);
+				expect(env.PI_SLACK_CONSENT_MODE).toBe(mode);
+				expect(env.RLM_DEPTH).toBe("0");
+			}
+		},
+	);
 
 	it("keeps semantic spawn lineage through the production runtime factory", async () => {
 		const tempDir = join(tmpdir(), `pi-runtime-factory-${Date.now()}-${Math.random().toString(36).slice(2)}`);
