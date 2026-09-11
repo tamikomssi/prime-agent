@@ -1146,6 +1146,7 @@ describe("daemon mode helpers", () => {
 
 				expect(seen).toEqual([mode, mode]);
 				const childCreate = createRuntime.mock.calls.at(-1)?.[0];
+				expect(childCreate?.sessionOptions?.execEnvProvider?.()).toHaveProperty("PI_SLACK_CONSENT_MODE", mode);
 				expect(childCreate?.sessionOptions).toMatchObject({
 					semanticParentSessionId: parentState.runtime.session.sessionId,
 					semanticSpawnedByRequestId: spawnedByRequestId,
@@ -5933,6 +5934,7 @@ describe("daemon mode helpers", () => {
 				if (!factory) throw new Error("Missing fixture runtime factory");
 				fixture.createRuntime.mockImplementation(async (options) => {
 					seen.push(process.env.PI_SLACK_CONSENT_MODE);
+					expect(options.sessionOptions?.execEnvProvider?.()).toHaveProperty("PI_SLACK_CONSENT_MODE", mode);
 					return factory(options);
 				});
 				const internals = fixture.daemon as unknown as {

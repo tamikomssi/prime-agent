@@ -492,6 +492,8 @@ export interface AgentSessionConfig {
 	subagentRuntimeHost?: SubagentRuntimeHost;
 	autonomous?: AgentAutonomousConfig;
 	prewarmIpythonKernel?: boolean;
+	/** Initial subprocess environment provider, available before kernel prewarm. */
+	execEnvProvider?: () => Record<string, string | undefined> | undefined;
 	autoRefineReviewer?: AutoRefineReviewer;
 	/**
 	 * When true, auto-refine runs synchronously between turns at the
@@ -1438,6 +1440,7 @@ export class AgentSession {
 		this._resourceLoader = config.resourceLoader;
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
+		this._execEnvProvider = config.execEnvProvider;
 		this._agentDir = config.agentDir;
 		this._modelRegistry = config.modelRegistry;
 		this._extensionRunnerRef = config.extensionRunnerRef;

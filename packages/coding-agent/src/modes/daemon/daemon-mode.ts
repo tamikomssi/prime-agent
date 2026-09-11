@@ -144,7 +144,7 @@ import {
 } from "./agent-roster.js";
 import { createCompactAssistantDelta } from "./compact-session-stream.js";
 import { DaemonClient } from "./daemon-client.js";
-import { filterClientEnv, withClientEnv } from "./daemon-client-env.js";
+import { execEnvForSession, filterClientEnv, withClientEnv } from "./daemon-client-env.js";
 import { deserializeDaemonError, serializeDaemonError } from "./daemon-errors.js";
 import { bindActiveSessionState } from "./daemon-extension-binding.js";
 import {
@@ -1921,6 +1921,7 @@ export class AgentDaemon {
 					runtimeMetadata: command.runtimeMetadata,
 					sessionLease,
 					sessionOptions: {
+						execEnvProvider: () => execEnvForSession(clientEnv),
 						rlmHeartbeatController: {
 							listRlmHeartbeats: (listOptions) => {
 								if (!stateRef) {
@@ -2793,6 +2794,7 @@ export class AgentDaemon {
 				sessionStartEvent: { type: "session_start", reason: "startup" },
 				sessionConfig: parentState.runtime.runtimeConfig,
 				sessionOptions: {
+					execEnvProvider: () => execEnvForSession(parentState.clientEnv),
 					model: options.model,
 					thinkingLevel: options.thinkingLevel,
 					serviceTier: options.serviceTier,
@@ -3215,6 +3217,7 @@ export class AgentDaemon {
 					sessionConfig: parentState.runtime.runtimeConfig,
 					sessionLease,
 					sessionOptions: {
+						execEnvProvider: () => execEnvForSession(hydrationEnv),
 						...(rehydratedModel ? { model: rehydratedModel } : {}),
 						agentMessageController: this.createAgentMessageController(() => stateRef),
 						agentObserveController: this.createAgentObserveController(() => stateRef),

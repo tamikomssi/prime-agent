@@ -202,3 +202,7 @@ The default daemon tool is `ipython`; its `bash()` descendants inherit the kerne
 environment. This does not scope custom extension spawners or the standalone
 exported legacy bash tool when an external caller wires it without a spawn hook.
 Env-less loads remain shared only when ambient consent does not need clearing.
+
+The provider is supplied in initial creation options before configured or
+snapshot-triggered prewarm. A running kernel keeps its environment until it is
+disposed; reconnecting or changing a provider does not update an existing kernel.
