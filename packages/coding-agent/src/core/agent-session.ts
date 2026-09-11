@@ -492,6 +492,8 @@ export interface AgentSessionConfig {
 	subagentRuntimeHost?: SubagentRuntimeHost;
 	autonomous?: AgentAutonomousConfig;
 	prewarmIpythonKernel?: boolean;
+	/** Initial subprocess environment provider, available before kernel prewarm. */
+	execEnvProvider?: () => Record<string, string | undefined> | undefined;
 	autoRefineReviewer?: AutoRefineReviewer;
 	/**
 	 * When true, auto-refine runs synchronously between turns at the
@@ -1438,6 +1440,7 @@ export class AgentSession {
 		this._resourceLoader = config.resourceLoader;
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
+		this._execEnvProvider = config.execEnvProvider;
 		this._agentDir = config.agentDir;
 		this._modelRegistry = config.modelRegistry;
 		this._extensionRunnerRef = config.extensionRunnerRef;
@@ -9214,7 +9217,8 @@ export class AgentSession {
 
 	/**
 	 * Set the provider for extra env vars merged over process.env in extension
-	 * pi.exec() subprocesses. The function is read at exec time, so a host (e.g.
+	 * pi.exec() subprocesses and lazily spawned Python kernels. The function is read
+	 * at spawn time, so a host (e.g.
 	 * the daemon) can update the underlying value per attach without rebinding.
 	 */
 	setExecEnvProvider(provider: (() => Record<string, string | undefined> | undefined) | undefined): void {
@@ -9560,7 +9564,8 @@ export class AgentSession {
 			// for continuity — the conversation is unchanged, so there's nothing to flag.
 			const notifyRestore = !this._ipythonRuntimeBuilt;
 			this._ipythonKernelProvisioner = new IpythonKernelProvisioner(this._cwd, {
-				env: this._rlmKernelEnv(),
+				// Read at lazy spawn, after the daemon has bound its session provider.
+				env: () => ({ ...this._execEnvProvider?.(), ...this._rlmKernelEnv() }),
 				commandPrefix: this.settingsManager.getShellCommandPrefix(),
 				shellPath: this.settingsManager.getShellPath(),
 				sessionId: this.sessionId,

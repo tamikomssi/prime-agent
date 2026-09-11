@@ -274,7 +274,7 @@ export interface IpythonToolDetails {
 export interface IpythonToolOptions {
 	/** Python override. Must have prime-agent-runtime installed. */
 	python?: string;
-	env?: Record<string, string>;
+	env?: Record<string, string | undefined> | (() => Record<string, string | undefined>);
 	/** Command prefix prepended to every bash() command. */
 	commandPrefix?: string;
 	/** Shell used by bash(). */
@@ -469,7 +469,7 @@ export class IpythonKernelProvisioner {
 				cwd: this.cwd,
 				// bash() reads these to pick its shell and command prefix.
 				env: {
-					...this.options?.env,
+					...(typeof this.options?.env === "function" ? this.options.env() : this.options?.env),
 					...(shellPath ? { PRIME_AGENT_BASH_SHELL: shellPath } : {}),
 					...(commandPrefix ? { PRIME_AGENT_BASH_COMMAND_PREFIX: commandPrefix } : {}),
 				},

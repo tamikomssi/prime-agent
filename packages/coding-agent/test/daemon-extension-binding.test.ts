@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { Type } from "typebox";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.js";
 import {
 	type CreateAgentSessionRuntimeFactory,
@@ -10,12 +11,16 @@ import {
 	createAgentSessionRuntime,
 	createAgentSessionServices,
 } from "../src/core/agent-session-runtime.js";
+import type { AgentSessionCreationOptions } from "../src/core/agent-session-services.js";
 import { AuthStorage } from "../src/core/auth-storage.js";
 import type { AgentCronJob } from "../src/core/cron-jobs.js";
+import { snapshotPathIn } from "../src/core/kernel/state-snapshot.js";
 import { SessionManager } from "../src/core/session-manager.js";
-import type { ExtensionAPI, ExtensionFactory } from "../src/index.js";
+import { IpythonKernelProvisioner } from "../src/core/tools/ipython.js";
+import type { ExtensionAPI, ExtensionFactory, ToolDefinition } from "../src/index.js";
 import { createAgentConnectionState } from "../src/modes/agent-connection/snapshot.js";
 import type { ActiveSessionState } from "../src/modes/daemon/active-session-state.js";
+import { execEnvForSession, withClientEnv } from "../src/modes/daemon/daemon-client-env.js";
 import { bindActiveSessionState } from "../src/modes/daemon/daemon-extension-binding.js";
 import type { DaemonOutbound } from "../src/modes/daemon/daemon-protocol.js";
 import { conversationMessages } from "./suite/harness.js";
@@ -41,7 +46,12 @@ describe("daemon extension binding", () => {
 		}
 	});
 
-	async function createRuntimeForTest(extensionFactory: ExtensionFactory, responses: string[]) {
+	async function createRuntimeForTest(
+		extensionFactory: ExtensionFactory,
+		responses: string[],
+		options: AgentSessionCreationOptions = {},
+		snapshot = false,
+	) {
 		const tempDir = join(tmpdir(), `pi-daemon-extension-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		mkdirSync(tempDir, { recursive: true });
 
@@ -84,8 +94,15 @@ describe("daemon extension binding", () => {
 					noThemes: true,
 				},
 			});
+			if (snapshot) {
+				const dir = sessionManager.getSessionArtifactDir();
+				if (!dir) throw new Error("Missing session artifact dir");
+				mkdirSync(dir, { recursive: true });
+				writeFileSync(snapshotPathIn(dir), "synthetic snapshot; prewarm intercepted");
+			}
 			return {
 				...(await createAgentSessionFromServices({
+					...options,
 					services,
 					sessionManager,
 					sessionStartEvent,
@@ -112,6 +129,116 @@ describe("daemon extension binding", () => {
 
 		return runtime;
 	}
+
+	it.each(["local-auto-approve", "slack", undefined])(
+		"supplies consent %s before configured and snapshot prewarm",
+		async (mode) => {
+			const seen: Array<Record<string, string | undefined>> = [];
+			const spy = vi.spyOn(IpythonKernelProvisioner.prototype, "prewarm").mockImplementation(function (
+				this: IpythonKernelProvisioner,
+			) {
+				const options = Reflect.get(this, "options") as { env: () => Record<string, string | undefined> };
+				seen.push(options.env());
+			});
+			try {
+				for (const snapshot of [false, true]) {
+					await createRuntimeForTest(
+						() => {},
+						[],
+						{
+							rlmDepth: 0,
+							prewarmIpythonKernel: !snapshot,
+							execEnvProvider: () =>
+								execEnvForSession(mode === undefined ? undefined : { PI_SLACK_CONSENT_MODE: mode }),
+						},
+						snapshot,
+					);
+				}
+				expect(seen.length).toBeGreaterThanOrEqual(2);
+				for (const env of seen) {
+					expect(Object.hasOwn(env, "PI_SLACK_CONSENT_MODE")).toBe(true);
+					expect(env.PI_SLACK_CONSENT_MODE).toBe(mode);
+				}
+			} finally {
+				spy.mockRestore();
+			}
+		},
+	);
+
+	it.each(["local-auto-approve", "slack", undefined])(
+		"preserves load-captured consent %s through extension commands and subprocesses",
+		async (mode) => {
+			const original = process.env.PI_SLACK_CONSENT_MODE;
+			process.env.PI_SLACK_CONSENT_MODE = "daemon-ambient";
+			try {
+				const seen: Array<string | undefined> = [];
+				const env = mode === undefined ? undefined : { PI_SLACK_CONSENT_MODE: mode };
+				const runtime = await withClientEnv(env, () =>
+					createRuntimeForTest((pi) => {
+						const capturedMode = process.env.PI_SLACK_CONSENT_MODE;
+						const tool = {
+							name: "consent_probe",
+							label: "Consent probe",
+							description: "test consent scope",
+							parameters: Type.Object({}),
+							execute: async () => {
+								seen.push(capturedMode);
+								// Callbacks do not own process.env: session-specific values must be captured at load.
+								expect(process.env.PI_SLACK_CONSENT_MODE).toBe("daemon-ambient");
+								const result = await pi.exec(process.execPath, [
+									"-e",
+									"console.log(JSON.stringify(process.env.PI_SLACK_CONSENT_MODE ?? null))",
+								]);
+								expect(result.code).toBe(0);
+								expect(JSON.parse(result.stdout)).toBe(mode ?? null);
+								return { content: [{ type: "text", text: "checked" }], details: {} };
+							},
+						} satisfies ToolDefinition;
+						pi.registerTool(tool);
+						pi.registerCommand("consent-probe", {
+							description: "run the registered tool without a model",
+							handler: async () => {
+								await tool.execute();
+							},
+						});
+					}, []),
+				);
+				const state: ActiveSessionState = {
+					activeSessionId: "consent-test",
+					runtime,
+					clients: new Set(),
+					pendingAttaches: 0,
+					extensionUiRequests: new Map(),
+					eventGeneration: "consent-generation",
+					lastEventSequence: 0,
+					clientEnv: mode === undefined ? undefined : { PI_SLACK_CONSENT_MODE: mode },
+				};
+				await bindActiveSessionState(state, { broadcast: () => {}, shutdown: () => {} });
+				const provisioner = Reflect.get(runtime.session, "_ipythonKernelProvisioner");
+				const kernelOptions = Reflect.get(provisioner, "options") as {
+					env: () => Record<string, string | undefined>;
+				};
+				expect(kernelOptions.env().PI_SLACK_CONSENT_MODE).toBe(mode);
+				expect(Object.hasOwn(kernelOptions.env(), "PI_SLACK_CONSENT_MODE")).toBe(true);
+				const originalDepth = kernelOptions.env().RLM_DEPTH;
+				const originalSessionDir = kernelOptions.env().RLM_SESSION_DIR;
+				runtime.session.setExecEnvProvider(() => ({
+					PI_SLACK_CONSENT_MODE: mode,
+					RLM_DEPTH: "999",
+					RLM_SESSION_DIR: "/wrong",
+				}));
+				expect(kernelOptions.env().RLM_DEPTH).toBe(originalDepth);
+				expect(kernelOptions.env().RLM_SESSION_DIR).toBe(originalSessionDir);
+				await bindActiveSessionState(state, { broadcast: () => {}, shutdown: () => {} });
+				await runtime.session.prompt("/consent-probe");
+				expect(seen).toEqual([mode]);
+				expect(process.env.PI_SLACK_CONSENT_MODE).toBe("daemon-ambient");
+			} finally {
+				if (original === undefined) delete process.env.PI_SLACK_CONSENT_MODE;
+				else process.env.PI_SLACK_CONSENT_MODE = original;
+			}
+		},
+	);
 
 	it("strips the duplicated partial message from broadcast message_update events", async () => {
 		const runtime = await createRuntimeForTest(() => {}, ["streamed reply"]);
