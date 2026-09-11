@@ -145,6 +145,50 @@ describe("IpythonKernelProvisioner", () => {
 		}
 	});
 
+	it("reads lazy session env at kernel spawn and isolates shell descendants", async () => {
+		const original = process.env.PI_SLACK_CONSENT_MODE;
+		process.env.PI_SLACK_CONSENT_MODE = "daemon-ambient";
+		const modes = ["local-auto-approve", "slack", undefined];
+		try {
+			await Promise.all(
+				modes.map(async (mode, index) => {
+					const output = join(tempDir, `env-${index}.json`);
+					const python = join(tempDir, `python-${index}`);
+					writeFileSync(
+						python,
+						`#!/usr/bin/env node
+const { execFileSync } = require("node:child_process");
+const child = execFileSync("/bin/bash", ["--noprofile", "--norc", "-c", "printenv PI_SLACK_CONSENT_MODE || true"], { encoding: "utf8" }).trim();
+require("node:fs").writeFileSync(${JSON.stringify(output)}, JSON.stringify({ mode: process.env.PI_SLACK_CONSENT_MODE ?? null, child, depth: process.env.RLM_DEPTH }));
+process.exit(42);
+`,
+					);
+					chmodSync(python, 0o755);
+					let sessionMode: string | undefined = "before-binding";
+					const provisioner = new IpythonKernelProvisioner(tempDir, {
+						python,
+						env: () => ({ PI_SLACK_CONSENT_MODE: sessionMode, RLM_DEPTH: String(index) }),
+					});
+					sessionMode = mode;
+					try {
+						await expect(provisioner.ensure()).rejects.toThrow(/Kernel exited before ready/);
+						expect(JSON.parse(readFileSync(output, "utf8"))).toEqual({
+							mode: mode ?? null,
+							child: mode ?? "",
+							depth: String(index),
+						});
+					} finally {
+						await provisioner.dispose();
+					}
+				}),
+			);
+			expect(process.env.PI_SLACK_CONSENT_MODE).toBe("daemon-ambient");
+		} finally {
+			if (original === undefined) delete process.env.PI_SLACK_CONSENT_MODE;
+			else process.env.PI_SLACK_CONSENT_MODE = original;
+		}
+	});
+
 	it("memoizes concurrent ensure() calls into one startup", async () => {
 		const { python, countRuns } = writeFakePython();
 		const provisioner = new IpythonKernelProvisioner(tempDir, { python });

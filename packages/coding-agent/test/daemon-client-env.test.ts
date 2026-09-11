@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { execEnvForSession, filterClientEnv, withClientEnv } from "../src/modes/daemon/daemon-client-env.js";
+import { collectDaemonClientEnv } from "../src/modes/daemon/daemon-protocol.js";
 
 describe("filterClientEnv", () => {
 	it("keeps only allowlisted keys", () => {
@@ -96,6 +98,7 @@ describe("withClientEnv", () => {
 				HERDR_SOCKET_PATH: undefined,
 				HERDR_TAB_ID: undefined,
 				HERDR_WORKSPACE_ID: undefined,
+				PI_SLACK_CONSENT_MODE: undefined,
 			});
 		});
 	});
@@ -113,5 +116,87 @@ describe("withClientEnv", () => {
 		await Promise.all([envless, windowed]);
 		expect(order).toEqual(["envless:undefined", "windowed:b"]);
 		expect(process.env.HERDR_PANE_ID).toBeUndefined();
+	});
+});
+
+describe("session consent environment", () => {
+	afterEach(() => vi.unstubAllEnvs());
+
+	it.each(["local-auto-approve", "slack", "", undefined])(
+		"transports explicit mode %s without a default",
+		async (mode) => {
+			const source = mode === undefined ? {} : { PI_SLACK_CONSENT_MODE: mode };
+			const env = filterClientEnv(collectDaemonClientEnv(source));
+			vi.stubEnv("PI_SLACK_CONSENT_MODE", "daemon-ambient");
+			await withClientEnv(env, async () => {
+				expect(process.env.PI_SLACK_CONSENT_MODE).toBe(mode);
+				const output = execFileSync(
+					process.execPath,
+					["-e", "console.log(JSON.stringify(process.env.PI_SLACK_CONSENT_MODE ?? null))"],
+					{
+						env: { ...process.env, ...execEnvForSession(env) },
+						encoding: "utf8",
+					},
+				);
+				expect(JSON.parse(output)).toBe(mode ?? null);
+			});
+			expect(process.env.PI_SLACK_CONSENT_MODE).toBe("daemon-ambient");
+			expect(execEnvForSession().PI_SLACK_CONSENT_MODE).toBeUndefined();
+		},
+	);
+
+	it("isolates concurrent explicit and absent sessions and restores failures", async () => {
+		vi.stubEnv("PI_SLACK_CONSENT_MODE", "daemon-ambient");
+		const modes = ["local-auto-approve", undefined, "slack"];
+		await Promise.all(
+			modes.map((mode) =>
+				withClientEnv(mode === undefined ? undefined : { PI_SLACK_CONSENT_MODE: mode }, async () => {
+					await new Promise((resolve) => setTimeout(resolve, 5));
+					expect(process.env.PI_SLACK_CONSENT_MODE).toBe(mode);
+				}),
+			),
+		);
+		await expect(
+			withClientEnv({ PI_SLACK_CONSENT_MODE: "local-auto-approve" }, async () => {
+				throw new Error("fail");
+			}),
+		).rejects.toThrow("fail");
+		expect(process.env.PI_SLACK_CONSENT_MODE).toBe("daemon-ambient");
+	});
+
+	it("clears restored ambient consent when env-less admission occurs inside a clearing window", async () => {
+		vi.stubEnv("PI_SLACK_CONSENT_MODE", "local-auto-approve");
+		let markEntered!: () => void;
+		let releaseFirst!: () => void;
+		const entered = new Promise<void>((resolve) => {
+			markEntered = resolve;
+		});
+		const release = new Promise<void>((resolve) => {
+			releaseFirst = resolve;
+		});
+		const first = withClientEnv({ HERDR_PANE_ID: "session-a" }, async () => {
+			expect(process.env.PI_SLACK_CONSENT_MODE).toBeUndefined();
+			markEntered();
+			await release;
+		});
+		await entered;
+		// B is admitted while A has cleared the daemon's ambient consent.
+		const baseline = execEnvForSession();
+		const second = withClientEnv(undefined, async () => {
+			for (const [key, value] of Object.entries(baseline)) expect(process.env[key]).toBe(value);
+			return process.env.PI_SLACK_CONSENT_MODE;
+		});
+		releaseFirst();
+		await first;
+		expect(await second).toBeUndefined();
+		expect(process.env.PI_SLACK_CONSENT_MODE).toBe("local-auto-approve");
+	});
+
+	it("rejects unrelated, malformed and inherited socket environment fields", () => {
+		expect(
+			filterClientEnv(JSON.parse('{"PI_SLACK_CONSENT_MODE":true,"NODE_OPTIONS":"--inspect","PATH":"/evil"}')),
+		).toBeUndefined();
+		const inherited = Object.create({ PI_SLACK_CONSENT_MODE: "local-auto-approve" });
+		expect(filterClientEnv(inherited)).toBeUndefined();
 	});
 });
