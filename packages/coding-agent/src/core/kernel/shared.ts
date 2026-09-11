@@ -48,7 +48,7 @@ export interface KernelManagerOptions {
 	/** Python interpreter with the kernel runtime available. Defaults to the auto-bootstrapped kernel. */
 	python?: string;
 	cwd?: string;
-	env?: Record<string, string>;
+	env?: Record<string, string | undefined>;
 	sessionId?: string;
 	hostHandlers?: HostRequestHandlers;
 	pythonSkills?: readonly KernelPythonSkill[];

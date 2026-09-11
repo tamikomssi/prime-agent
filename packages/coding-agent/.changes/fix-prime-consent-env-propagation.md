@@ -1,0 +1,1 @@
+- Fixed daemon sessions and nested workers losing an explicitly configured Slack consent mode during extension loading and Python kernel startup, without inheriting consent from the daemon environment.
