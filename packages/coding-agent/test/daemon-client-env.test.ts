@@ -164,6 +164,34 @@ describe("session consent environment", () => {
 		expect(process.env.PI_SLACK_CONSENT_MODE).toBe("daemon-ambient");
 	});
 
+	it("clears restored ambient consent when env-less admission occurs inside a clearing window", async () => {
+		vi.stubEnv("PI_SLACK_CONSENT_MODE", "local-auto-approve");
+		let markEntered!: () => void;
+		let releaseFirst!: () => void;
+		const entered = new Promise<void>((resolve) => {
+			markEntered = resolve;
+		});
+		const release = new Promise<void>((resolve) => {
+			releaseFirst = resolve;
+		});
+		const first = withClientEnv({ HERDR_PANE_ID: "session-a" }, async () => {
+			expect(process.env.PI_SLACK_CONSENT_MODE).toBeUndefined();
+			markEntered();
+			await release;
+		});
+		await entered;
+		// B is admitted while A has cleared the daemon's ambient consent.
+		const baseline = execEnvForSession();
+		const second = withClientEnv(undefined, async () => {
+			for (const [key, value] of Object.entries(baseline)) expect(process.env[key]).toBe(value);
+			return process.env.PI_SLACK_CONSENT_MODE;
+		});
+		releaseFirst();
+		await first;
+		expect(await second).toBeUndefined();
+		expect(process.env.PI_SLACK_CONSENT_MODE).toBe("local-auto-approve");
+	});
+
 	it("rejects unrelated, malformed and inherited socket environment fields", () => {
 		expect(
 			filterClientEnv(JSON.parse('{"PI_SLACK_CONSENT_MODE":true,"NODE_OPTIONS":"--inspect","PATH":"/evil"}')),

@@ -36,11 +36,9 @@ export function execEnvForSession(clientEnv?: Record<string, string>): Record<st
 	return env;
 }
 
-// Shared/exclusive lock: env windows are exclusive (they mutate process.env),
-// env-less loads are shared — they run concurrently with each other but never
-// inside an env window, so they can't capture another session's identity.
+// Every extension-load window is exclusive. An env-less caller must also pin
+// consent absent: process.env at admission may be a peer's temporary window.
 let lastExclusive: Promise<unknown> = Promise.resolve();
-const activeShared = new Set<Promise<unknown>>();
 
 /**
  * Run fn with the client's env applied to process.env, restoring afterwards.
@@ -49,40 +47,17 @@ const activeShared = new Set<Promise<unknown>>();
  * this window the session's exec env covers subprocess reads.
  */
 export async function withClientEnv<T>(env: Record<string, string> | undefined, fn: () => Promise<T>): Promise<T> {
-	// Consent is session-owned, never inherited from the daemon. Use an exclusive
-	// window when ambient consent must be cleared; ordinary env-less loads stay shared.
-	if (!env && process.env.PI_SLACK_CONSENT_MODE !== undefined) {
-		env = {};
-		for (const key of DAEMON_CLIENT_ENV_KEYS) {
-			const value = baseClientEnv[key];
-			if (value !== undefined) env[key] = value;
-		}
-	}
-	if (!env) {
-		const gate = lastExclusive;
-		const run = (async () => {
-			await gate.catch(() => undefined);
-			return fn();
-		})();
-		const tracked = run.catch(() => undefined);
-		activeShared.add(tracked);
-		void tracked.then(() => activeShared.delete(tracked));
-		return run;
-	}
+	const sessionEnv = env ?? baseClientEnv;
 	const prior = lastExclusive;
-	// Snapshot synchronously: shareds arriving later gate on this window via
-	// lastExclusive, so waiting for them here would deadlock.
-	const sharedAtRequest = [...activeShared];
 	const run = (async () => {
 		await prior.catch(() => undefined);
-		await Promise.all(sharedAtRequest);
 		const previous = new Map<string, string | undefined>();
 		// Pin the full allowlist (unsetting keys the client didn't send) so a
 		// partially-forwarded env can't mix with the daemon's ambient values —
 		// mirroring execEnvForSession.
 		for (const key of DAEMON_CLIENT_ENV_KEYS) {
 			previous.set(key, process.env[key]);
-			const value = env[key];
+			const value = sessionEnv[key];
 			if (value === undefined) {
 				delete process.env[key];
 			} else {
