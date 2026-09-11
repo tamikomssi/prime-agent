@@ -164,6 +164,19 @@ describe("daemon extension binding", () => {
 					clientEnv: mode === undefined ? undefined : { PI_SLACK_CONSENT_MODE: mode },
 				};
 				await bindActiveSessionState(state, { broadcast: () => {}, shutdown: () => {} });
+				const provisioner = Reflect.get(runtime.session, "_ipythonKernelProvisioner");
+				const kernelOptions = Reflect.get(provisioner, "options");
+				expect(kernelOptions.env().PI_SLACK_CONSENT_MODE).toBe(mode);
+				const originalDepth = kernelOptions.env().RLM_DEPTH;
+				const originalSessionDir = kernelOptions.env().RLM_SESSION_DIR;
+				runtime.session.setExecEnvProvider(() => ({
+					PI_SLACK_CONSENT_MODE: mode,
+					RLM_DEPTH: "999",
+					RLM_SESSION_DIR: "/wrong",
+				}));
+				expect(kernelOptions.env().RLM_DEPTH).toBe(originalDepth);
+				expect(kernelOptions.env().RLM_SESSION_DIR).toBe(originalSessionDir);
+				await bindActiveSessionState(state, { broadcast: () => {}, shutdown: () => {} });
 				await runtime.session.prompt("/consent-probe");
 				expect(seen).toEqual([mode]);
 				expect(process.env.PI_SLACK_CONSENT_MODE).toBe("daemon-ambient");

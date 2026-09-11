@@ -175,8 +175,9 @@ keys and non-string values are not accepted by this allowlist.
 
 The session captures its client environment. Active nested workers and hydrated
 children inherit their parent's captured environment. Extension loading and reloads
-run under that session environment; `pi.exec` receives an explicit per-session
-overlay. An absent consent value is never filled from the daemon's launch environment.
+run under that session environment; `pi.exec` and lazily spawned Python kernels
+receive an explicit per-session overlay. Kernel shell descendants inherit that
+overlay. RLM identity and runtime paths override the overlay, not vice versa. An absent consent value is never filled from the daemon's launch environment.
 
 Extension callbacks do not have exclusive ownership of `process.env`. Extensions
 that use this setting must capture it **inside their per-session factory**, then use
@@ -196,3 +197,8 @@ string, just as it can create sessions and run commands. Filtering rejects malfo
 or unrelated environment fields; it does not authenticate an owner decision. Do not
 expose the socket to untrusted users. Extension approval policy remains the authority
 for interpreting a supplied mode.
+
+The default daemon tool is `ipython`; its `bash()` descendants inherit the kernel
+environment. This does not scope custom extension spawners or the standalone
+exported legacy bash tool when an external caller wires it without a spawn hook.
+Env-less loads remain shared only when ambient consent does not need clearing.
