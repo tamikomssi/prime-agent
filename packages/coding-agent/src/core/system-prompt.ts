@@ -130,24 +130,6 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		parentAgent: options.rlmParentAgent,
 	});
 
-	// Appended AFTER the trained buildRlmPrompt prefix, and before the harness-state
-	// menu, so the model reads when/why to delegate and then sees the concrete subagent
-	// specs it can match against — the same ordering as Claude Code's Agent tool.
-	if ((allowRecursion ?? true) && hasIpython) {
-		const visiblePythonSkillNames = new Set(
-			getPythonSkillRuntimeInfo(visibleSkills).map((skill) => skill.importName),
-		);
-		prompt += `\n\n${buildSubagentGuidance({
-			includeRefineExamples: hasRefineSkill,
-			hasAgentMessage: visiblePythonSkillNames.has("agent_message"),
-			hasAgentObserve: visiblePythonSkillNames.has("agent_observe"),
-		})}`;
-	}
-
-	if (harnessState) {
-		prompt += `\n\n${formatHarnessStateForPrompt(harnessState, { includeIpythonExamples: hasIpython, includeShellExamples: hasBash, includeRefineExamples: hasIpython && hasRefineSkill })}`;
-	}
-
 	if (genericMcpSection) {
 		prompt += `\n\n${genericMcpSection}`;
 	}
@@ -174,6 +156,29 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 
 	if (appendSection) {
 		prompt += appendSection;
+	}
+
+	// Stable content ends here. Everything below changes within a session (a live
+	// worker roster, or the harness-state block re-rendered on every /refine), so it
+	// goes last: a provider that caches by prefix keeps the (much larger) stable
+	// prefix warm across those changes instead of invalidating the whole prompt.
+	//
+	// Still ordered before the harness-state menu so the model reads when/why to
+	// delegate and then sees the concrete subagent specs it can match against — the
+	// same ordering as Claude Code's Agent tool.
+	if ((allowRecursion ?? true) && hasIpython) {
+		const visiblePythonSkillNames = new Set(
+			getPythonSkillRuntimeInfo(visibleSkills).map((skill) => skill.importName),
+		);
+		prompt += `\n\n${buildSubagentGuidance({
+			includeRefineExamples: hasRefineSkill,
+			hasAgentMessage: visiblePythonSkillNames.has("agent_message"),
+			hasAgentObserve: visiblePythonSkillNames.has("agent_observe"),
+		})}`;
+	}
+
+	if (harnessState) {
+		prompt += `\n\n${formatHarnessStateForPrompt(harnessState, { includeIpythonExamples: hasIpython, includeShellExamples: hasBash, includeRefineExamples: hasIpython && hasRefineSkill })}`;
 	}
 
 	return prompt;

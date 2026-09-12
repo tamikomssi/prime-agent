@@ -35,6 +35,31 @@ function pythonSkill(name: string, importName = name.replaceAll("-", "_")): Skil
 	};
 }
 
+function harnessMemoryEntry(id: string, content: string): NonNullable<HarnessState["entries"]["memory"]>[string] {
+	return {
+		id,
+		kind: "memory",
+		title: id,
+		content,
+		path: "test",
+		reference: {},
+		arguments: {},
+		metadata: {},
+		source: "refine",
+		created_at: "2026-06-08T00:00:00.000Z",
+		updated_at: "2026-06-08T00:00:00.000Z",
+		version: 1,
+	};
+}
+
+function emptyHarnessStateFixture(): HarnessState {
+	return {
+		schema: 1,
+		entries: { prompt: {}, memory: {}, skill: {}, subagent: {} },
+		refinements: [],
+	};
+}
+
 describe("buildRlmPrompt", () => {
 	test("defaults omitted activeTools to ipython guidance", () => {
 		const prompt = buildRlmPrompt({
@@ -673,6 +698,129 @@ describe("buildSystemPrompt", () => {
 
 		expect(prompt).toContain("# Additional Guidance");
 		expect(prompt.match(/- Use dynamic_tool for summaries\./g)).toHaveLength(1);
+	});
+
+	test("places the harness-state block after project context and skills, at the very end", () => {
+		const harnessState: HarnessState = {
+			...emptyHarnessStateFixture(),
+			entries: {
+				...emptyHarnessStateFixture().entries,
+				memory: { note: harnessMemoryEntry("note", "A recorded lesson.") },
+			},
+		};
+
+		const prompt = buildSystemPrompt({
+			selectedTools: ["ipython"],
+			contextFiles: [{ path: "AGENTS.md", content: "project rules" }],
+			skills: [skill("websearch")],
+			cwd: "/repo",
+			messagesPath: "/repo/.pi/sessions/session.jsonl",
+			harnessState,
+		});
+
+		const projectContextIndex = prompt.indexOf("# Project Context");
+		const skillsIndex = prompt.indexOf("<available_skills>");
+		const subagentGuidanceIndex = prompt.indexOf("# Delegating to sub-agents");
+		const harnessStateIndex = prompt.indexOf("# Continual Harness State");
+
+		expect(projectContextIndex).toBeGreaterThan(-1);
+		expect(skillsIndex).toBeGreaterThan(-1);
+		expect(subagentGuidanceIndex).toBeGreaterThan(-1);
+		expect(harnessStateIndex).toBeGreaterThan(-1);
+
+		// Stable content (project context, skills) comes first; the volatile blocks
+		// (subagent guidance, then harness state) come last, with harness state last
+		// of all so a provider that caches by prefix keeps the stable prefix warm.
+		expect(projectContextIndex).toBeLessThan(subagentGuidanceIndex);
+		expect(skillsIndex).toBeLessThan(subagentGuidanceIndex);
+		expect(subagentGuidanceIndex).toBeLessThan(harnessStateIndex);
+	});
+
+	test("identical inputs produce byte-identical prompts", () => {
+		const options = {
+			selectedTools: ["ipython"],
+			contextFiles: [{ path: "AGENTS.md", content: "project rules" }],
+			skills: [pythonSkill("refine")],
+			cwd: "/repo",
+			messagesPath: "/repo/.pi/sessions/session.jsonl",
+			harnessState: {
+				...emptyHarnessStateFixture(),
+				entries: {
+					...emptyHarnessStateFixture().entries,
+					memory: { note: harnessMemoryEntry("note", "A recorded lesson.") },
+				},
+				refinements: [
+					{
+						id: "refine_1",
+						trigger: "Observed validation miss",
+						changes: ["create memory:note"],
+						evidence: "manual test",
+						outcome: "Future runs should record the lesson.",
+						created_at: "2026-06-08T00:00:00.000Z",
+					},
+				],
+			},
+		};
+
+		const first = buildSystemPrompt(options);
+		const second = buildSystemPrompt(options);
+
+		expect(first).toBe(second);
+	});
+
+	test("a harness-state-only change leaves the prefix up to the volatile section byte-identical", () => {
+		const baseOptions = {
+			selectedTools: ["ipython"],
+			contextFiles: [{ path: "AGENTS.md", content: "project rules" }],
+			skills: [pythonSkill("refine")],
+			cwd: "/repo",
+			messagesPath: "/repo/.pi/sessions/session.jsonl",
+		};
+
+		// The stable part of the prompt: everything the default (no harness state)
+		// build produces, i.e. base RLM prompt through project context, skills, and
+		// subagent guidance.
+		const stablePrefix = buildSystemPrompt(baseOptions);
+
+		const harnessStateA: HarnessState = {
+			...emptyHarnessStateFixture(),
+			entries: {
+				...emptyHarnessStateFixture().entries,
+				memory: { note: harnessMemoryEntry("note", "First recorded lesson.") },
+			},
+		};
+		const harnessStateB: HarnessState = {
+			...emptyHarnessStateFixture(),
+			entries: {
+				...emptyHarnessStateFixture().entries,
+				memory: {
+					note: harnessMemoryEntry("note", "First recorded lesson."),
+					other: harnessMemoryEntry("other", "A second, unrelated lesson added after /refine."),
+				},
+				subagent: { worker: harnessMemoryEntry("worker", "New worker roster entry.") },
+			},
+			refinements: [
+				{
+					id: "refine_2",
+					trigger: "Roster changed",
+					changes: ["create subagent:worker"],
+					evidence: "manual test",
+					outcome: "Future runs should route to the new worker.",
+					created_at: "2026-06-09T00:00:00.000Z",
+				},
+			],
+		};
+
+		const promptA = buildSystemPrompt({ ...baseOptions, harnessState: harnessStateA });
+		const promptB = buildSystemPrompt({ ...baseOptions, harnessState: harnessStateB });
+
+		let commonPrefixLength = 0;
+		const maxLength = Math.min(promptA.length, promptB.length);
+		while (commonPrefixLength < maxLength && promptA[commonPrefixLength] === promptB[commonPrefixLength]) {
+			commonPrefixLength++;
+		}
+
+		expect(commonPrefixLength).toBeGreaterThanOrEqual(stablePrefix.length);
 	});
 });
 
