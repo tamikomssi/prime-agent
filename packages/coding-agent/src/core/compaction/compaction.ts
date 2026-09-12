@@ -389,8 +389,19 @@ export function findCutPoint(
 
 	for (let i = endIndex - 1; i >= startIndex; i--) {
 		const entry = entries[i];
-		if (entry.type !== "message") continue;
-		const messageTokens = estimateTokens(entry.message);
+		let messageTokens: number;
+		if (entry.type === "message") {
+			messageTokens = estimateTokens(entry.message);
+		} else if (entry.type === "custom_message") {
+			// custom_message entries (e.g. /goal re-injections) are sent to the model as
+			// user-role content via getMessageFromEntry/createCustomMessage; they must count
+			// toward the budget or the cut point keeps far more than keepRecentTokens.
+			messageTokens = estimateTokens(
+				createCustomMessage(entry.customType, entry.content, entry.display, entry.details, entry.timestamp),
+			);
+		} else {
+			continue;
+		}
 		accumulatedTokens += messageTokens;
 		if (accumulatedTokens >= keepRecentTokens) {
 			// No cut point at/after i (trailing tool results): keep only the final turn, not everything.
