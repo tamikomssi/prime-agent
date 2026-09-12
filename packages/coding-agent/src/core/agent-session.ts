@@ -1953,7 +1953,11 @@ export class AgentSession {
 			this._emitGoalUpdate();
 			return;
 		}
-		if (this._goalState.status !== "paused" && this._goalState.status !== "budget_limited") {
+		if (
+			this._goalState.status !== "paused" &&
+			this._goalState.status !== "budget_limited" &&
+			this._goalState.status !== "error"
+		) {
 			this._emitGoalUpdate();
 			return;
 		}

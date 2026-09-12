@@ -5962,7 +5962,7 @@ export class InteractiveMode {
 			case "error":
 				return goal.lastError
 					? `Goal error${this.formatGoalDetailSuffix(goal.lastError, visibleWidth("Goal error"))}`
-					: "Goal error";
+					: "Goal error (/goal resume)";
 			default: {
 				const _exhaustive: never = goal.status;
 				return _exhaustive;
