@@ -295,6 +295,28 @@ describe("daemon command", () => {
 		).toBe(true);
 	});
 
+	// --steer and --follow-up were removed from `send` by PR #631 ("make agent
+	// messages steer-only") to avoid a deadlock where one agent waits for a
+	// reply queued behind the work waiting for that reply. These two cases
+	// pin today's intended behavior (a clear, fast rejection) so a future fix
+	// for the stale --help text (see command-registry-send.test.ts) cannot
+	// silently reintroduce follow-up delivery through this flag instead.
+	it.each(["--steer", "--follow-up"])(
+		"rejects send %s as an unknown option, matching the steer-only removal",
+		async (flag) => {
+			await expect(
+				handleDaemonCommand(["daemon", "--socket", "/tmp/prime-agent.sock", "send", "worker", flag, "hello"]),
+			).resolves.toBe(true);
+
+			expect(daemonClientMock.instances[0]?.requests).toEqual([]);
+			expect(
+				consoleErrorMessages.some(
+					(message) => typeof message === "string" && message.includes(`Unknown option for send: ${flag}`),
+				),
+			).toBe(true);
+		},
+	);
+
 	it("supports send separator after the target for flag-like message text", async () => {
 		await expect(
 			handleDaemonCommand([

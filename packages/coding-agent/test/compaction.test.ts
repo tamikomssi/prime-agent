@@ -19,6 +19,7 @@ import {
 import {
 	buildSessionContext,
 	type CompactionEntry,
+	type CustomMessageEntry,
 	type ModelChangeEntry,
 	migrateSessionEntries,
 	parseSessionEntries,
@@ -117,6 +118,21 @@ function createModelChangeEntry(provider: string, modelId: string): ModelChangeE
 		timestamp: new Date().toISOString(),
 		provider,
 		modelId,
+	};
+	lastId = id;
+	return entry;
+}
+
+function createCustomMessageEntry(customType: string, content: string, display = true): CustomMessageEntry {
+	const id = `test-id-${entryCounter++}`;
+	const entry: CustomMessageEntry = {
+		type: "custom_message",
+		id,
+		parentId: lastId,
+		timestamp: new Date().toISOString(),
+		customType,
+		content,
+		display,
 	};
 	lastId = id;
 	return entry;
@@ -368,6 +384,58 @@ describe("findCutPoint", () => {
 			expect(result.isSplitTurn).toBe(true);
 			expect(result.turnStartIndex).toBe(2); // Turn 2 starts at index 2
 		}
+	});
+
+	it("counts custom_message tokens toward the budget so large re-injections force an earlier cut", () => {
+		// Mirrors the /goal feature: small user/assistant turns interleaved with large
+		// custom_message re-injections (goal_context). Each custom_message is 4000 chars
+		// (~1000 estimated tokens) - large enough that, if uncounted, the walk never
+		// crosses keepRecentTokens and the whole transcript is kept.
+		const bigContent = "x".repeat(4000); // ~1000 tokens via chars/4
+		const entries: SessionEntry[] = [
+			createMessageEntry(createUserMessage("u0")),
+			createMessageEntry(createAssistantMessage("a0")),
+			createCustomMessageEntry("goal_context", bigContent), // index 2, ~1000 tokens
+			createMessageEntry(createUserMessage("u1")),
+			createMessageEntry(createAssistantMessage("a1")),
+			createCustomMessageEntry("goal_context", bigContent), // index 5, ~1000 tokens
+			createMessageEntry(createUserMessage("u2")),
+			createMessageEntry(createAssistantMessage("a2")),
+			createCustomMessageEntry("goal_context", bigContent), // index 8, ~1000 tokens
+		];
+
+		const result = findCutPoint(entries, 0, entries.length, 1500);
+
+		// Walking back from index 8: idx8 (~1000) + idx7 (~1) + idx6 (~1) = ~1002 < 1500;
+		// + idx5 (~1000) = ~2002 >= 1500 -> cut lands at index 5 (the second custom_message).
+		// Without counting custom_message tokens, accumulated tokens never reach 1500
+		// (only ~6 tokens total across every user/assistant message) and the cut would
+		// fall back to index 0, keeping the entire transcript.
+		expect(result.firstKeptEntryIndex).toBe(5);
+		expect(entries[result.firstKeptEntryIndex].type).toBe("custom_message");
+	});
+
+	it("cuts exactly as before when there are no custom_message entries", () => {
+		// Regression guard: transcripts without custom_message entries must take the
+		// same path through findCutPoint as before this fix (the new branch is simply
+		// never taken).
+		const bigText = "x".repeat(4000); // ~1000 tokens via chars/4
+		const entries: SessionEntry[] = [
+			createMessageEntry(createUserMessage("u0")),
+			createMessageEntry(createAssistantMessage(bigText)), // index 1, ~1000 tokens
+			createMessageEntry(createUserMessage("u1")),
+			createMessageEntry(createAssistantMessage(bigText)), // index 3, ~1000 tokens
+			createMessageEntry(createUserMessage("u2")),
+			createMessageEntry(createAssistantMessage(bigText)), // index 5, ~1000 tokens
+		];
+
+		const result = findCutPoint(entries, 0, entries.length, 1500);
+
+		// idx5 (~1000) + idx4 (~1) = ~1001 < 1500; + idx3 (~1000) = ~2001 >= 1500 ->
+		// cut lands at index 3, splitting the turn that starts at index 2.
+		expect(result.firstKeptEntryIndex).toBe(3);
+		expect(result.isSplitTurn).toBe(true);
+		expect(result.turnStartIndex).toBe(2);
 	});
 });
 
