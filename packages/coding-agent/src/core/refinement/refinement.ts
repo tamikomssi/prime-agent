@@ -492,7 +492,15 @@ export function formatHarnessStateForPrompt(
 	}
 
 	lines.push(`recent refinements: ${state.refinements.length}`);
-	for (const event of state.refinements.slice(-maxRefinements)) {
+	// Select the same tail window as before (unchanged), but render it in a stable,
+	// explicit order so that re-rendering the same selected set of events always
+	// produces identical bytes regardless of the order the input array arrived in.
+	// created_at is only ever a tie-break alongside the unique event id, never the
+	// sole or "current time" key, so this stays deterministic across renders.
+	const recentRefinements = [...state.refinements.slice(-maxRefinements)].sort((a, b) =>
+		[a.created_at, a.id].join("\0").localeCompare([b.created_at, b.id].join("\0")),
+	);
+	for (const event of recentRefinements) {
 		const changes = event.changes.length > 0 ? event.changes.join(", ") : "no applied edits";
 		const outcome = event.outcome ? `; outcome: ${compactText(event.outcome, maxContentLength)}` : "";
 		lines.push(`- [${event.id}] ${compactText(event.trigger, maxContentLength)}: ${changes}${outcome}`);
