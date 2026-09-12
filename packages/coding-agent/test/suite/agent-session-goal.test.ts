@@ -612,6 +612,67 @@ describe("AgentSession goals", () => {
 		expect(harness.getPendingResponseCount()).toBe(1);
 	});
 
+	it("resumes an errored goal with /goal resume", async () => {
+		const waiting = createWaitingTool();
+		const sessionRef: { current?: AgentSession } = {};
+		const harness = await createHarness({
+			tools: [createFauxIpythonTool(sessionRef), waiting.tool],
+			settings: { retry: { enabled: false } },
+		});
+		sessionRef.current = harness.session;
+		harnesses.push(harness);
+		harness.setResponses([
+			assistantWithUsage(fauxAssistantMessage("Working on it."), { input: 5, output: 3, totalTokens: 8 }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "transient provider error" }),
+		]);
+
+		await harness.session.prompt("/goal do work");
+
+		const erroredGoal = harness.session.goalState;
+		expect(erroredGoal).toMatchObject({
+			active: false,
+			status: "error",
+			lastError: "transient provider error",
+		});
+		expect(erroredGoal.tokensUsed).toBeGreaterThan(0);
+		const goalIdBeforeResume = erroredGoal.goalId;
+		const tokensUsedBeforeResume = erroredGoal.tokensUsed;
+		const contextMessagesBeforeResume = goalContextMessages(harness).length;
+
+		const waitForStart = waiting.waitForStart(harness);
+		harness.setResponses([fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" })]);
+		const resumePromise = harness.session.prompt("/goal resume");
+		await waitForStart;
+
+		// The resume transition itself (emitted synchronously before the queued
+		// continuation turn runs and accrues its own usage) must preserve the
+		// goal's accounting exactly as it stood in the error state.
+		const goalUpdates = harness.eventsOfType("goal_update");
+		const resumeTransitionIndex = goalUpdates.findIndex(
+			(event, index) =>
+				index > 0 && goalUpdates[index - 1].goal.status === "error" && event.goal.status === "active",
+		);
+		expect(resumeTransitionIndex).toBeGreaterThan(-1);
+		expect(goalUpdates[resumeTransitionIndex].goal).toMatchObject({
+			active: true,
+			status: "active",
+			goalId: goalIdBeforeResume,
+			tokensUsed: tokensUsedBeforeResume,
+			lastError: undefined,
+		});
+
+		expect(harness.session.goalState).toMatchObject({
+			active: true,
+			status: "active",
+			goalId: goalIdBeforeResume,
+			lastError: undefined,
+		});
+		expect(goalContextMessages(harness).length).toBeGreaterThan(contextMessagesBeforeResume);
+
+		waiting.release();
+		await resumePromise;
+	});
+
 	it("reports active goal elapsed time on status reads and goal.get", async () => {
 		vi.useFakeTimers();
 		try {
