@@ -576,6 +576,78 @@ describe("AgentSession goals", () => {
 		});
 	});
 
+	it("pauses the goal after three consecutive no-tool-call continuations", async () => {
+		const harness = await createGoalHarness();
+		harness.setResponses([
+			fauxAssistantMessage("Awaiting your decision."),
+			fauxAssistantMessage("Awaiting your decision."),
+			fauxAssistantMessage("Awaiting your decision."),
+		]);
+
+		await harness.session.prompt("/goal do something that needs a human decision");
+
+		// Initial slash-command continuation, plus one real continuation after each
+		// of the first two no-tool-call turns. The third no-tool-call turn must not
+		// draw a fourth goal_context: the streak guard pauses the goal instead.
+		expect(goalContextMessages(harness)).toHaveLength(3);
+		expect(harness.session.goalState).toMatchObject({
+			active: false,
+			status: "paused",
+			lastReason: "Paused: no tool activity for 3 consecutive continuations (waiting on user?)",
+			continuationsUsed: 2,
+		});
+		expect(harness.getPendingResponseCount()).toBe(0);
+	});
+
+	it("resets the no-progress streak on a tool-calling turn, delaying the stall pause", async () => {
+		const harness = await createGoalHarness();
+		harness.setResponses([
+			fauxAssistantMessage("Awaiting your decision."), // 1: no tool -> streak 1
+			fauxAssistantMessage(fauxToolCall("ipython", { code: "noop" }), { stopReason: "toolUse" }), // 2: tool call
+			fauxAssistantMessage("Awaiting your decision."), // 3: no tool, but the tool call above resets the streak
+			fauxAssistantMessage("Awaiting your decision."), // 4: no tool -> streak 1
+			fauxAssistantMessage("Awaiting your decision."), // 5: no tool -> streak 2
+			fauxAssistantMessage("Awaiting your decision."), // 6: no tool -> streak 3, pauses
+		]);
+
+		await harness.session.prompt("/goal do something that needs a human decision");
+
+		// Without the reset, turns 1, 3, and 4 would already sum to a streak of 3 and
+		// pause after only 4 turns instead of 6.
+		expect(harness.session.goalState).toMatchObject({
+			active: false,
+			status: "paused",
+			lastReason: "Paused: no tool activity for 3 consecutive continuations (waiting on user?)",
+			continuationsUsed: 4,
+		});
+		expect(goalContextMessages(harness)).toHaveLength(5);
+		expect(harness.getPendingResponseCount()).toBe(0);
+	});
+
+	it("resumes and completes the goal after a no-tool-activity stall pause", async () => {
+		const harness = await createGoalHarness();
+		harness.setResponses([
+			fauxAssistantMessage("Awaiting your decision."),
+			fauxAssistantMessage("Awaiting your decision."),
+			fauxAssistantMessage("Awaiting your decision."),
+		]);
+
+		await harness.session.prompt("/goal do something that needs a human decision");
+		expect(harness.session.goalState.status).toBe("paused");
+
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("ipython", COMPLETE_GOAL_CELL), { stopReason: "toolUse" }),
+			fauxAssistantMessage("Goal complete."),
+		]);
+		await harness.session.prompt("/goal resume");
+
+		expect(harness.session.goalState).toMatchObject({
+			active: false,
+			status: "complete",
+		});
+		expect(visibleAssistantTexts(harness)).toContain("Goal complete.");
+	});
+
 	it("does not resume a completed goal", async () => {
 		const harness = await createGoalHarness();
 		harness.setResponses([

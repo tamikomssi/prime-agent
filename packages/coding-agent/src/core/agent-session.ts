@@ -982,6 +982,12 @@ interface RlmSubagentModelSelection {
 
 const KERNEL_STATE_LISTING_TIMEOUT_MS = 5000;
 const RLM_MAX_DEPTH_STATE_CUSTOM_TYPE = "rlm_max_depth_state";
+// After this many consecutive no-tool-call assistant turns under an active goal,
+// stop injecting goal continuations and pause the goal instead. Without a cap, a
+// goal with no token budget re-injects "Continue working toward the active thread
+// goal..." after every turn even when the agent is legitimately blocked on a human
+// decision, burning a provider call roughly every few seconds indefinitely.
+const GOAL_NO_PROGRESS_PAUSE_THRESHOLD = 3;
 
 function noopRlmChildAbort(): void {}
 function noopRlmChildEventUnsubscribe(): void {}
@@ -1159,6 +1165,18 @@ export class AgentSession {
 	private _goalContinuationAwaitsRlmWork = false;
 	private _goalAccountedAssistantMessages = new WeakSet<AssistantMessage>();
 	private _goalAbortInProgress = false;
+	// Consecutive assistant turns, while a goal is active, that ended with zero tool
+	// calls. Reset on any tool call, /goal resume, a new objective, or real user input.
+	// Guards against an unbounded continuation loop when the agent is blocked on a
+	// human decision: see GOAL_NO_PROGRESS_PAUSE_THRESHOLD.
+	private _goalNoProgressStreak = 0;
+	// Length of context.newMessages already scanned for tool calls by the streak
+	// check above. getContinuationMessages only fires on a turn with no pending
+	// tool call, so the terminal message itself is never the one that made
+	// progress; the window since this cursor (which can span an intervening
+	// tool-calling turn the agent's own tool loop already resolved) is what
+	// actually proves whether the goal moved since the last continuation.
+	private _goalNoProgressScanIndex = 0;
 	private _autonomousState: AutonomousRuntimeState;
 	private _autonomousContinuationSuppressionDepth = 0;
 	private _autonomousContinuationSuppressedMessages = new WeakSet<AgentMessage>();
@@ -1923,6 +1941,8 @@ export class AgentSession {
 		};
 		this._goalAccountingStartedAt = now;
 		this._goalContinuationAwaitsRlmWork = false;
+		this._goalNoProgressStreak = 0;
+		this._goalNoProgressScanIndex = 0;
 		this._setGoalState(goal);
 		return this._goalState;
 	}
@@ -1968,6 +1988,8 @@ export class AgentSession {
 			lastError: undefined,
 		});
 		if (nextStatus === "active") {
+			this._goalNoProgressStreak = 0;
+			this._goalNoProgressScanIndex = 0;
 			await this._runOrQueueGoalContext("continuation");
 		}
 	}
@@ -3418,6 +3440,39 @@ export class AgentSession {
 			return [];
 		}
 		this._goalContinuationAwaitsRlmWork = false;
+		// A turn that called at least one tool made observable progress and clears the
+		// stall streak. A turn that called none is a no-progress turn: once N of those
+		// happen back to back (e.g. the agent is legitimately blocked on a human
+		// decision and can only reply with text), stop re-injecting continuations —
+		// which would otherwise fire again next turn, forever, with no token budget to
+		// stop it — and pause the goal instead.
+		//
+		// context.message is always tool-call-free here (a pending tool call keeps the
+		// agent's own tool loop going without asking for a continuation), so progress is
+		// judged over every message since the last continuation, which can include an
+		// intervening tool-calling turn the tool loop already resolved on its own.
+		const newMessages = context.newMessages ?? [];
+		const scanIndex = this._goalNoProgressScanIndex ?? 0;
+		if (newMessages.length < scanIndex) {
+			this._goalNoProgressScanIndex = 0;
+		}
+		const turnsSinceLastContinuation = newMessages.slice(this._goalNoProgressScanIndex ?? 0);
+		this._goalNoProgressScanIndex = newMessages.length;
+		const hadToolCall = turnsSinceLastContinuation.some(
+			(m) => m.role === "assistant" && m.content.some((block) => block.type === "toolCall"),
+		);
+		if (hadToolCall) {
+			this._goalNoProgressStreak = 0;
+		} else {
+			this._goalNoProgressStreak = (this._goalNoProgressStreak ?? 0) + 1;
+			if (this._goalNoProgressStreak >= GOAL_NO_PROGRESS_PAUSE_THRESHOLD) {
+				this._goalNoProgressStreak = 0;
+				this._pauseGoal(
+					`Paused: no tool activity for ${GOAL_NO_PROGRESS_PAUSE_THRESHOLD} consecutive continuations (waiting on user?)`,
+				);
+				return [];
+			}
+		}
 		try {
 			this._ensureGoalRuntimeActive(context.context);
 			const nextGoal = {
@@ -4966,6 +5021,12 @@ export class AgentSession {
 	}
 
 	private async _prompt(text: string, options?: InternalPromptOptions): Promise<void> {
+		// Real input (interactive, extension, or subagent-relayed) always arrives through
+		// here; goal continuations never do (they are admitted directly as prepared turn
+		// actions or returned from the continuation hook). So any call here is genuine
+		// progress signal against the no-tool-activity stall guard.
+		this._goalNoProgressStreak = 0;
+		this._goalNoProgressScanIndex = 0;
 		const resumeSuspendedInput = options?.resumeIfIdle !== false;
 		if (!this.isStreaming) {
 			if (resumeSuspendedInput) this._resumeSessionInputAdmission();
